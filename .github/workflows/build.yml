@@ -37,3 +37,17 @@ jobs:
           name: moshu-windows-setup
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+      - name: 整理免安装版
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item src-tauri/target/release/moshu.exe "portable/墨枢.exe"
+          Set-Content -Encoding utf8 portable/说明.txt "双击「墨枢.exe」即可运行，不用安装。`r`n需要系统带有 Microsoft Edge WebView2 运行库（Windows 10/11 一般自带）；打不开时到 https://go.microsoft.com/fwlink/p/?LinkId=2124703 安装。`r`n作品数据存在 %APPDATA%\app.moshu.writer\ 下，换电脑时复制这个文件夹即可。"
+
+      - name: 上传免安装版
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshu-windows-portable
+          path: portable/
+          if-no-files-found: error

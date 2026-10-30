@@ -15,6 +15,8 @@ Windows 桌面小说写作工具。AI 用你自己的 DeepSeek 密钥，所有�
 
 在 GitHub 仓库的 **Actions → 构建 Windows 安装包** 里打开最近一次成功的运行，下载 `moshu-windows-setup`，解压后运行里面的 `墨枢_x.y.z_x64-setup.exe`。
 
+**免安装版**：同一个页面里下载 `moshu-windows-portable`，解压后双击 `墨枢.exe` 直接运行。需要系统有 WebView2 运行库（Windows 10/11 一般自带）。
+
 第一次打开后到「设置」里填 DeepSeek API 密钥，点「测试连接并获取模型」。密钥存在 Windows 凭据管理器里，不进数据库。
 
 数据在 `%APPDATA%\app.moshu.writer\` 下，数据库是 `moshu.db`，备份在 `backups` 文件夹，保留 14 份。
