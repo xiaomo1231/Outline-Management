@@ -1,0 +1,517 @@
+[
+ {
+  "id": "basic",
+  "name": "基础信息",
+  "note": "",
+  "fields": [
+   {
+    "k": "alias",
+    "label": "别名 / 外号",
+    "hint": "别人怎么叫他，谁会这么叫"
+   },
+   {
+    "k": "gender",
+    "label": "性别",
+    "hint": ""
+   },
+   {
+    "k": "age",
+    "label": "年龄（故事开始时）",
+    "hint": "会随故事时间自动推算",
+    "flag": "dyn"
+   },
+   {
+    "k": "birthday",
+    "label": "生日",
+    "hint": ""
+   },
+   {
+    "k": "height",
+    "label": "身高体型",
+    "hint": "具体数字或相对描述"
+   },
+   {
+    "k": "origin",
+    "label": "出身 / 籍贯",
+    "hint": "城乡、地域，会影响口音和习惯"
+   },
+   {
+    "k": "id",
+    "label": "身份 / 职业",
+    "hint": "",
+    "flag": "dyn"
+   },
+   {
+    "k": "class",
+    "label": "经济状况与社会阶层",
+    "hint": "钱从哪来，够不够花",
+    "flag": "dyn"
+   }
+  ]
+ },
+ {
+  "id": "label",
+  "name": "人设概括",
+  "note": "简单版只填这里的一句话也可以，AI 能据此扩写其余各组。",
+  "fields": [
+   {
+    "k": "tag",
+    "label": "一句话人设",
+    "hint": "例如：可爱"
+   },
+   {
+    "k": "tags",
+    "label": "关键词标签",
+    "hint": "3–5 个词，用顿号隔开"
+   },
+   {
+    "k": "contra",
+    "label": "核心反差",
+    "hint": "表面……，其实……"
+   },
+   {
+    "k": "firstimp",
+    "label": "读者第一印象",
+    "hint": "希望读者第一次见他时记住什么"
+   }
+  ]
+ },
+ {
+  "id": "look",
+  "name": "外貌",
+  "note": "外貌项默认锁定：正文写出矛盾时会报错，只有你能改。",
+  "fields": [
+   {
+    "k": "look",
+    "label": "标志性特征",
+    "hint": "疤、痣、发色这类一眼认出的东西",
+    "flag": "lock"
+   },
+   {
+    "k": "face",
+    "label": "五官与表情",
+    "hint": "",
+    "flag": "lock"
+   },
+   {
+    "k": "hair",
+    "label": "发型发色",
+    "hint": "",
+    "flag": "lock"
+   },
+   {
+    "k": "eyes",
+    "label": "眼睛与眼神",
+    "hint": "",
+    "flag": "lock"
+   },
+   {
+    "k": "body",
+    "label": "体态与动作习惯",
+    "hint": "站姿、走路"
+   },
+   {
+    "k": "clothes",
+    "label": "常穿衣着",
+    "hint": "",
+    "flag": "dyn"
+   },
+   {
+    "k": "acc",
+    "label": "随身物品 / 配饰",
+    "hint": "",
+    "flag": "dyn"
+   },
+   {
+    "k": "voiceq",
+    "label": "声音与音色",
+    "hint": ""
+   },
+   {
+    "k": "smell",
+    "label": "气味",
+    "hint": "别人靠近时会注意到什么"
+   }
+  ]
+ },
+ {
+  "id": "persona",
+  "name": "性格层次",
+  "note": "",
+  "fields": [
+   {
+    "k": "core",
+    "label": "性格核心",
+    "hint": "一句话说清这个人"
+   },
+   {
+    "k": "outer",
+    "label": "对外性格",
+    "hint": "陌生人、同事眼中的他"
+   },
+   {
+    "k": "close",
+    "label": "对熟人性格",
+    "hint": "朋友面前的样子"
+   },
+   {
+    "k": "intimate",
+    "label": "对亲密的人",
+    "hint": "家人、恋人面前"
+   },
+   {
+    "k": "alone",
+    "label": "独处时",
+    "hint": "没人看着的时候"
+   },
+   {
+    "k": "hidden",
+    "label": "隐藏性格",
+    "hint": "自己都未必承认的一面",
+    "flag": "hid"
+   },
+   {
+    "k": "pressure",
+    "label": "压力下的反应",
+    "hint": "逃避、硬扛还是迁怒"
+   },
+   {
+    "k": "anger",
+    "label": "生气时",
+    "hint": ""
+   },
+   {
+    "k": "sad",
+    "label": "难过时",
+    "hint": ""
+   },
+   {
+    "k": "happy",
+    "label": "开心时",
+    "hint": ""
+   }
+  ]
+ },
+ {
+  "id": "show",
+  "name": "具体表现",
+  "note": "把人设落到读者看得见的行为上，AI 写正文时主要参考这一组。",
+  "fields": [
+   {
+    "k": "show",
+    "label": "人设的具体表现",
+    "hint": "怎么让读者自己看出“可爱”，而不是写“她很可爱”"
+   },
+   {
+    "k": "voice",
+    "label": "说话方式",
+    "hint": "语速、句子长短、用不用敬语"
+   },
+   {
+    "k": "catch",
+    "label": "口头禅",
+    "hint": ""
+   },
+   {
+    "k": "call",
+    "label": "对别人的称呼习惯",
+    "hint": ""
+   },
+   {
+    "k": "habit",
+    "label": "小习惯",
+    "hint": "每天都会做的小事"
+   },
+   {
+    "k": "gesture",
+    "label": "小动作",
+    "hint": "手、眼、身体的下意识动作"
+   },
+   {
+    "k": "nervous",
+    "label": "紧张时",
+    "hint": ""
+   },
+   {
+    "k": "lying",
+    "label": "撒谎时的破绽",
+    "hint": ""
+   },
+   {
+    "k": "badhabit",
+    "label": "坏习惯",
+    "hint": ""
+   },
+   {
+    "k": "routine",
+    "label": "作息",
+    "hint": ""
+   },
+   {
+    "k": "food",
+    "label": "饮食偏好",
+    "hint": ""
+   },
+   {
+    "k": "likes",
+    "label": "喜欢的东西",
+    "hint": ""
+   },
+   {
+    "k": "dislikes",
+    "label": "讨厌的东西",
+    "hint": ""
+   },
+   {
+    "k": "taboo",
+    "label": "雷点",
+    "hint": "碰了就翻脸的事"
+   }
+  ]
+ },
+ {
+  "id": "inner",
+  "name": "内在动机",
+  "note": "",
+  "fields": [
+   {
+    "k": "values",
+    "label": "价值观",
+    "hint": ""
+   },
+   {
+    "k": "line",
+    "label": "底线",
+    "hint": "无论如何不会做的事"
+   },
+   {
+    "k": "want",
+    "label": "想要的（表层目标）",
+    "hint": "他自己说得出口的目标",
+    "flag": "dyn"
+   },
+   {
+    "k": "need",
+    "label": "真正需要的",
+    "hint": "他还没意识到的"
+   },
+   {
+    "k": "fear",
+    "label": "最怕的",
+    "hint": ""
+   },
+   {
+    "k": "wound",
+    "label": "心结 / 创伤",
+    "hint": "",
+    "flag": "hid"
+   },
+   {
+    "k": "lie",
+    "label": "相信的错误观念",
+    "hint": "弧光的起点"
+   },
+   {
+    "k": "secret",
+    "label": "秘密",
+    "hint": "",
+    "flag": "hid"
+   },
+   {
+    "k": "shame",
+    "label": "羞耻点",
+    "hint": ""
+   }
+  ]
+ },
+ {
+  "id": "hidden",
+  "name": "隐藏属性",
+  "note": "每项都可以标“未揭示”和计划在第几章揭示。未揭示的内容不会出现在 AI 写的正文和对白里。",
+  "fields": [
+   {
+    "k": "hid_id",
+    "label": "隐藏身份",
+    "hint": "",
+    "flag": "hid"
+   },
+   {
+    "k": "hid_ab",
+    "label": "隐藏能力",
+    "hint": "",
+    "flag": "hid"
+   },
+   {
+    "k": "hid_blood",
+    "label": "隐藏出身 / 血统",
+    "hint": "",
+    "flag": "hid"
+   },
+   {
+    "k": "hid_rel",
+    "label": "隐藏关系",
+    "hint": "和谁有不为人知的关系",
+    "flag": "hid"
+   },
+   {
+    "k": "hid_hint",
+    "label": "已经埋下的暗示",
+    "hint": "在哪几章给过读者线索"
+   }
+  ]
+ },
+ {
+  "id": "ability",
+  "name": "能力",
+  "note": "",
+  "fields": [
+   {
+    "k": "good",
+    "label": "擅长",
+    "hint": ""
+   },
+   {
+    "k": "bad",
+    "label": "不擅长",
+    "hint": ""
+   },
+   {
+    "k": "power",
+    "label": "特殊能力 / 境界等级",
+    "hint": "",
+    "flag": "dyn"
+   },
+   {
+    "k": "limit",
+    "label": "能力上限与代价",
+    "hint": "用一次要付出什么"
+   },
+   {
+    "k": "weak",
+    "label": "弱点",
+    "hint": ""
+   },
+   {
+    "k": "growth",
+    "label": "成长路线",
+    "hint": "每一段会获得或失去什么"
+   }
+  ]
+ },
+ {
+  "id": "past",
+  "name": "背景经历",
+  "note": "",
+  "fields": [
+   {
+    "k": "family",
+    "label": "家庭",
+    "hint": "父母、兄弟姐妹、现在的关系"
+   },
+   {
+    "k": "child",
+    "label": "童年关键事件",
+    "hint": ""
+   },
+   {
+    "k": "edu",
+    "label": "教育 / 师承",
+    "hint": ""
+   },
+   {
+    "k": "pastev",
+    "label": "重要过往",
+    "hint": ""
+   },
+   {
+    "k": "turn",
+    "label": "人生转折点",
+    "hint": "故事开始前最近的一次"
+   }
+  ]
+ },
+ {
+  "id": "rel",
+  "name": "关系",
+  "note": "",
+  "fields": [
+   {
+    "k": "rel",
+    "label": "关系概述",
+    "hint": "",
+    "flag": "dyn"
+   },
+   {
+    "k": "relmap",
+    "label": "对每个人的称呼与真实看法",
+    "hint": "一行一个人：称呼 / 表面态度 / 真实看法",
+    "flag": "dyn"
+   },
+   {
+    "k": "enemy",
+    "label": "敌对或竞争",
+    "hint": "",
+    "flag": ""
+   },
+   {
+    "k": "debt",
+    "label": "人情与亏欠",
+    "hint": "谁欠谁"
+   }
+  ]
+ },
+ {
+  "id": "arc",
+  "name": "人物弧光",
+  "note": "",
+  "fields": [
+   {
+    "k": "start",
+    "label": "开场状态",
+    "hint": ""
+   },
+   {
+    "k": "end",
+    "label": "结局状态",
+    "hint": ""
+   },
+   {
+    "k": "arcch",
+    "label": "关键转变章节",
+    "hint": "可以和篇幅规划的阶段对应"
+   },
+   {
+    "k": "cost",
+    "label": "成长代价",
+    "hint": ""
+   }
+  ]
+ },
+ {
+  "id": "write",
+  "name": "写作提示",
+  "note": "这一组直接进入 AI 的写作提示词。",
+  "fields": [
+   {
+    "k": "dont",
+    "label": "OOC 红线",
+    "hint": "这个角色绝不会说的话、做的事"
+   },
+   {
+    "k": "note",
+    "label": "写他时要注意",
+    "hint": ""
+   },
+   {
+    "k": "lines",
+    "label": "示例对白",
+    "hint": "不同场合各一句：对陌生人 / 对朋友 / 生气时"
+   },
+   {
+    "k": "first",
+    "label": "首次出场",
+    "hint": ""
+   }
+  ]
+ }
+]

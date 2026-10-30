@@ -1,0 +1,75 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "墨枢主窗口的权限",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    "sql:default",
+    "sql:allow-execute",
+    "dialog:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://api.deepseek.com/*"
+        },
+        {
+          "url": "https://*.deepseek.com/*"
+        }
+      ]
+    }
+  ]
+}

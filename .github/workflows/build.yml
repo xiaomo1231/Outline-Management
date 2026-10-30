@@ -1,0 +1,39 @@
+name: 构建 Windows 安装包
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 打包
+        run: npx tauri build
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: moshu-windows-setup
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
