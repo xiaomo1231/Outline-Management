@@ -345,4 +345,17 @@ export async function fuseStyles(blocks: StyleBlock[], note: string): Promise<St
   );
 }
 
+/** 拆书：根据统计数字和三段样本，描述这本书的写法（不复述情节） */
+export async function describeStyle(title: string, metricsLine: string, samples: string[]): Promise<StyleDraft> {
+  return chatJson<StyleDraft>(
+    [
+      sys(`你是小说编辑，帮作者把一本书的“写法”提炼成风格块。只描述怎么写：视角、语言质感、词汇质感、节奏、对白、基调、避免什么。
+绝不写人物名、情节、设定名词、桥段和套路，也不要引用原文句子。描述要具体到能照着写，比如“动作句多用单字动词”“心理活动借一个小动作带过”。
+返回 JSON：{"name":"风格名（不用书名，用写法特点命名，6 字内）","desc":"适用场景","dims":{"pov":"","lang":"","vocab":"","rhythm":"","dialog":"","tone":"","avoid":""},"reply":"一两句说明这本书写法最值得学的地方"}`),
+      user(`书名：${title}\n${metricsLine}\n\n下面是从书里抽的三段（开头、中段、后段），只用来观察写法：\n\n${samples.map((x, i) => `【片段${i + 1}】\n${x}`).join("\n\n")}`),
+    ],
+    { temperature: 0.6 },
+  );
+}
+
 export { leak };

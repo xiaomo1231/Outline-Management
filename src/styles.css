@@ -454,3 +454,10 @@ label.check span{display:flex;gap:6px;align-items:center;color:var(--ink)}
 .seg{flex-wrap:wrap}
 @media (max-width:720px){.tabs{max-width:100%;overflow-x:auto}.membar{margin-left:0}}
 .assist>header select{border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:var(--paper)}
+.card .sc small.mt{display:block;margin-top:2px;color:var(--muted);font-size:11px}
+.form .tbl-wrap{max-height:none}
+.card .sc{flex-wrap:wrap}
+.card .sc small.mt{flex-basis:100%}
+.form table.ev{min-width:0;width:100%;font-size:12px}
+.form table.ev th,.form table.ev td{padding:4px 5px}
+.form .tbl-wrap{overflow-x:auto}

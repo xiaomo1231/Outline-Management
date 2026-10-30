@@ -168,6 +168,39 @@ export interface StyleBlock {
   dims: StyleDims;
   builtin?: boolean;
   ai?: boolean;
+  /** 从小说统计出来的写法数字，编译进提示词作为量化参考 */
+  metrics?: StyleMetrics;
+}
+/** 写法的量化特征。比例都是 0–1，频率是每千字 */
+export interface StyleMetrics {
+  /** 统计了几本书 */
+  books: number;
+  /** 平均句长（字） */
+  sentLen: number;
+  /** 句长的波动（标准差） */
+  sentSd: number;
+  /** 段落长度中位数（字） */
+  paraLen: number;
+  /** 只有一句话的段落占比 */
+  paraOne: number;
+  /** 对白字数占比 */
+  dialog: number;
+  /** 感叹号、问号、省略号 每千字 */
+  excl: number;
+  ques: number;
+  ellip: number;
+  /** 比喻词（仿佛、好像、如同……）每千字 */
+  simile: number;
+  /** 叙述里第一人称的比例 */
+  firstPerson: number;
+  /** 章节开头到第一句对白的字数 */
+  firstDialog: number;
+  /** 章长中位数（字），没有章节标题的书算不出来 */
+  chapLen: number | null;
+  /** 章末是问句 / 对白 / 15 字内短句的比例 */
+  endQ: number | null;
+  endDialog: number | null;
+  endShort: number | null;
 }
 export interface StyleSetup {
   core: Id | null;
