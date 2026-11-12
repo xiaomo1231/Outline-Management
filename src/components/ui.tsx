@@ -1,3 +1,4 @@
+import { toast } from "../lib/store";
 import { useState, type ReactNode } from "react";
 
 export function Issue({ lv, children, actions }: { lv: "r" | "y" | "g"; children: ReactNode; actions?: ReactNode }) {
@@ -35,6 +36,8 @@ export function AsyncButton({ onClick, children, primary, disabled, title }: { o
         setBusy(true);
         try {
           await onClick();
+        } catch (e: any) {
+          toast("出错了：" + (e?.message || e));
         } finally {
           setBusy(false);
         }

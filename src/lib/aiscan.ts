@@ -16,14 +16,30 @@ export const PATTERNS: { re: RegExp; label: string }[] = [
   { re: /时间仿佛(静止|停止)/g, label: "时间静止" },
 ];
 
-export function scan(text: string) {
+export function scan(text: string, bans: string[] = []) {
   const rows: { label: string; n: number }[] = [];
   for (const p of PATTERNS) {
     p.re.lastIndex = 0;
     const n = text.match(p.re)?.length ?? 0;
     if (n) rows.push({ label: p.label, n });
   }
+  for (const w of bans) {
+    const n = text.split(w).length - 1;
+    if (n) rows.push({ label: "禁用：" + w, n });
+  }
   return rows;
+}
+
+/**
+ * 禁用清单：一行一条。短的（不超过 8 个字、没有空格）当作词，扫描时直接匹配；
+ * 长的是套路或剧情走向，只写进提示词。
+ */
+export function parseBans(text: string | undefined): { words: string[]; all: string[] } {
+  const all = (text ?? "")
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return { all, words: all.filter((x) => x.length <= 8 && !/\s/.test(x)) };
 }
 
 /** 句子长度序列，用来画节奏条 */

@@ -25,6 +25,16 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS memory_work ON memory(work_id, layer)`,
   `CREATE INDEX IF NOT EXISTS votes_work ON votes(work_id, settled)`,
   `CREATE INDEX IF NOT EXISTS text_work ON chapter_text(work_id)`,
+  `CREATE TABLE IF NOT EXISTS chapter_versions(id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL, work_id TEXT NOT NULL, html TEXT, plain TEXT, words INTEGER DEFAULT 0, at INTEGER NOT NULL, reason TEXT)`,
+  `CREATE INDEX IF NOT EXISTS versions_ch ON chapter_versions(chapter_id, at)`,
+];
+
+/** 给老数据库补列。列已存在时 SQLite 会报错，忽略即可 */
+const MIGRATIONS = [
+  `ALTER TABLE chapter_text ADD COLUMN deleted INTEGER DEFAULT 0`,
+  `ALTER TABLE works ADD COLUMN deleted INTEGER DEFAULT 0`,
+  `ALTER TABLE daily ADD COLUMN pasted INTEGER DEFAULT 0`,
+  `ALTER TABLE daily ADD COLUMN ai INTEGER DEFAULT 0`,
 ];
 
 async function tauriDb(): Promise<Db> {
@@ -109,6 +119,13 @@ export function getDb(): Promise<Db> {
     ready = (async () => {
       const db = isTauri ? await tauriDb() : await browserDb();
       for (const s of SCHEMA) await db.exec(s);
+      for (const m of MIGRATIONS) {
+        try {
+          await db.exec(m);
+        } catch {
+          /* 已经有这一列 */
+        }
+      }
       return db;
     })();
   }

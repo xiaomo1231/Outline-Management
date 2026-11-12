@@ -8,6 +8,7 @@ import { compileStyle, DIMS, leak } from "../style";
 import { describe } from "../chars";
 import * as repo from "../repo";
 import { clip } from "../util";
+import { getBible } from "../memory";
 
 const sys = (content: string): Msg => ({ role: "system", content });
 const user = (content: string): Msg => ({ role: "user", content });
@@ -117,6 +118,56 @@ ${text.slice(0, 30000)}
 
 返回 JSON：{"issues":[{"lv":"r|y|g","layer":"事实|性格","who":"人物","quote":"原文引用","setting":"冲突的设定","src":"设定出处，例如人物卡/第3章","suggestion":"一句修改建议","change":{"field":"字段键","to":"新值","cause":"触发事件"}}]}
 没有问题就返回 {"issues":[]}`),
+    ],
+    { model: "write", temperature: 0.2 },
+  );
+  return res.issues ?? [];
+}
+
+export interface ContIssue {
+  lv: "r" | "y" | "g";
+  kind: string;
+  quote: string;
+  conflict: string;
+  src?: string;
+  suggestion: string;
+}
+
+/** 设定、时间线、前文剧情、伏笔和禁用清单的一致性检查（人物之外的部分） */
+export async function checkContinuity(c: Ctx, r: ChRef, text: string): Promise<ContIssue[]> {
+  if (!text.trim()) return [];
+  const bible = await getBible(c.work.id);
+  const prev = allChapters(c.vols)
+    .filter((x) => x.no < r.no && x.no >= r.no - 6)
+    .map((x) => `第${x.no}章 ${x.ch.title}：${x.ch.summary || x.ch.scenes.map((s) => s.t).join("；") || "（无摘要）"}`);
+  const evs = c.events.filter((e) => e.ch === r.ch.id).map((e) => `第${e.day}天${e.time ? " " + e.time : ""}：${e.t}${e.place ? "（" + e.place + "）" : ""}`);
+  const res = await chatJson<{ issues: ContIssue[] }>(
+    [
+      sys(await stablePrefix(c, "你是严格的连载校对。只指出确实和前文、设定矛盾的地方，不挑文笔，不评价剧情好坏。")),
+      user(`检查第${r.no}章正文有没有和已有内容矛盾。人物性格另有检查，这里只看：
+1. 设定：世界观、能力体系、物品、地名、组织，和作品圣经或常驻页冲突的。
+2. 时间线：和前几章、本章时间线事件对不上的时间、地点、先后顺序。
+3. 前文：和前几章已经发生的事冲突，例如已死的人出场、已用掉的东西又出现、重复交代。
+4. 伏笔：提前揭开还没到时候的伏笔，或者收了没埋过的伏笔。
+5. 禁用清单：写了作者禁用的词、套路或剧情走向。
+
+作品圣经：
+${clip(bible.text || "（还没有）", 6000)}
+
+前几章：
+${prev.join("\n") || "（没有）"}
+
+本章时间线事件：
+${evs.join("\n") || "（没有）"}
+
+本章大纲：
+${outlineOf(c, r)}
+
+正文：
+${text.slice(0, 30000)}
+
+返回 JSON：{"issues":[{"lv":"r|y|g","kind":"设定|时间线|前文|伏笔|禁用","quote":"原文引用","conflict":"和什么冲突","src":"出处，例如作品圣经/第3章","suggestion":"一句修改建议"}]}
+r 是确定矛盾，y 是可能矛盾，g 是提醒。没有问题就返回 {"issues":[]}`),
     ],
     { model: "write", temperature: 0.2 },
   );

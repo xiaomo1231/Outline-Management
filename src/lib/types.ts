@@ -210,6 +210,8 @@ export interface StyleSetup {
   rules: string;
   /** 作者的样章，原文保留 */
   samples: string;
+  /** 禁用清单：一行一条，词、套路或剧情走向，所有 AI 任务都不许写 */
+  bans?: string;
   /** 本作品自建的风格块 */
   blocks: StyleBlock[];
 }
@@ -223,7 +225,19 @@ export interface ChangeSet {
   undone?: boolean;
 }
 
-export type DocKind = "outline" | "chars" | "events" | "plan" | "style" | "calls" | "resident" | "bible" | "memlog" | "changesets" | "inspire";
+export type DocKind = "outline" | "chars" | "events" | "plan" | "style" | "calls" | "resident" | "bible" | "memlog" | "changesets" | "inspire" | "trash";
+
+/** 回收站里的一项（章或场景）。作品的回收站在 works 表里 */
+export interface TrashItem {
+  id: Id;
+  kind: "chapter" | "scene";
+  at: number;
+  label: string;
+  /** 章：所在卷 id；场景：所在章 id */
+  parent: Id;
+  index: number;
+  data: Chapter | Scene;
+}
 
 export interface ChatMsg {
   role: "user" | "assistant";

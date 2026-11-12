@@ -5,11 +5,11 @@ import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
 import { uid } from "../../lib/util";
-import * as repo from "../../lib/repo";
 import { AsyncButton, Empty, Field, Issue } from "../../components/ui";
 import type { Say } from "./Outline";
 import type { Scene } from "../../lib/types";
 import { ctx, names } from "./ctx";
+import { trashChapter, trashScene } from "../../lib/trash";
 
 /** 选中的章和场景（场景序号 -1 表示只选了章） */
 export interface Sel {
@@ -340,16 +340,8 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               className="btn"
               type="button"
               onClick={() => {
-                if (!confirm(`删除第${r.no}章？正文也会一起删除。`)) return;
-                const sids = new Set(r.ch.scenes.map((x) => x.id));
-                useStore.getState().editMany(["vols", "events"], (d) => {
-                  d.vols[r.v].chapters.splice(r.c, 1);
-                  for (const e of d.events) {
-                    if (e.sc && sids.has(e.sc)) delete e.sc;
-                    if (e.ch === r.ch.id) e.ch = null;
-                  }
-                });
-                repo.deleteText(r.ch.id);
+                if (!confirm(`删除第${r.no}章？正文会一起放进回收站，30 天内可以在「设置 → 回收站」恢复。`)) return;
+                trashChapter(useStore.getState().work!.id, r.v, r.c, r.no).then(() => toast("已放进回收站"));
                 setSel({ ch: null, s: -1 });
               }}
             >
@@ -471,14 +463,9 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               className="btn"
               type="button"
               onClick={() => {
-                editMany(["vols", "events"], (d) => {
-                  const sc = d.vols[r.v].chapters[r.c].scenes[sel.s];
-                  const e = sc.ev && d.events.find((x) => x.id === sc.ev);
-                  if (e) delete e.sc;
-                  d.vols[r.v].chapters[r.c].scenes.splice(sel.s, 1);
-                });
+                trashScene(useStore.getState().work!.id, r.v, r.c, sel.s);
                 setSel({ ch: r.ch.id, s: -1 });
-                toast("场景已删除，时间线上的事件保留");
+                toast("场景已放进回收站，时间线上的事件保留");
               }}
             >
               删除场景

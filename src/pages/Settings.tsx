@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
-import { useStore, toast } from "../lib/store";
+import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
 import { DEFAULT_AI, listModels, chat, errText, type AiSettings } from "../lib/ai/client";
 import { MEM_DEFAULT, useSetting, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
-import { allChapters } from "../lib/outline";
 import { AsyncButton, Empty } from "../components/ui";
+import { BackupPanel, ExportPanel, TrashPanel } from "./DataPanels";
 
 export default function Settings() {
-  const work = useStore((s) => s.work);
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
   const [memp, setMemp] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [key, setKey] = useState("");
@@ -161,44 +160,11 @@ export default function Settings() {
 
       <div className="panel">
         <h3>数据</h3>
-        <p className="legend">{dir ? `所有数据存在：${dir}（数据库 moshu.db，备份在 backups 文件夹，保留 14 份）` : "浏览器调试版的数据存在这个浏览器里。"}</p>
-        {work && (
-          <div className="addrow">
-            <AsyncButton onClick={() => exportWork("md")}>导出本书为 Markdown</AsyncButton>
-            <AsyncButton onClick={() => exportWork("txt")}>导出本书为 TXT</AsyncButton>
-          </div>
-        )}
+        <p className="legend">{dir ? `所有数据存在：${dir}（数据库 moshu.db，备份在 backups 文件夹）` : "浏览器调试版的数据存在这个浏览器里。"}</p>
       </div>
+      <ExportPanel />
+      <BackupPanel />
+      <TrashPanel />
     </section>
   );
-}
-
-async function exportWork(kind: "md" | "txt") {
-  const s = useStore.getState();
-  if (!s.work) return;
-  const parts: string[] = [kind === "md" ? `# ${s.work.name}\n\n${s.work.intro}\n` : `${s.work.name}\n\n${s.work.intro}\n`];
-  let lastVol = -1;
-  for (const r of allChapters(s.vols)) {
-    if (r.v !== lastVol) {
-      lastVol = r.v;
-      parts.push(kind === "md" ? `\n## ${s.vols[r.v].title}\n` : `\n${s.vols[r.v].title}\n`);
-    }
-    const t = await repo.loadText(r.ch.id);
-    parts.push((kind === "md" ? `\n### 第${r.no}章 ${r.ch.title}\n\n` : `\n第${r.no}章 ${r.ch.title}\n\n`) + (t?.plain ?? "").split("\n").filter(Boolean).map((p) => (kind === "txt" ? "　　" + p : p)).join(kind === "md" ? "\n\n" : "\n"));
-  }
-  const text = parts.join("\n");
-  const name = `${s.work.name}.${kind}`;
-  if (isTauri) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({ defaultPath: name, filters: [{ name: kind.toUpperCase(), extensions: [kind] }] });
-    if (!path) return;
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    await writeTextFile(path, text);
-    toast("已导出到 " + path);
-  } else {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
-    a.download = name;
-    a.click();
-  }
 }
