@@ -3,12 +3,15 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { AiEdit, AiText, AiTracker, AI_META, aiChars } from "../components/aiMarks";
-import { ScanHighlight, scanKey } from "../components/scanDeco";
-import { useStore, toast } from "../lib/store";
+import { ScanHighlight, scanKey, setBanWords } from "../components/scanDeco";
+import { useStore, toast, registerFlush } from "../lib/store";
+import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, type Snap } from "../lib/chapterSave";
+import { diffText } from "../lib/diff";
+import { loadInto, publishText } from "../lib/editorText";
 import * as repo from "../lib/repo";
 import { allChapters, findChapter, newChapter, plants } from "../lib/outline";
 import { countWords, debounce, today, uid } from "../lib/util";
-import { scan, sentenceLengths } from "../lib/aiscan";
+import { scan, sentenceLengths, parseBans } from "../lib/aiscan";
 import { EDITOR_DEFAULT, useSetting, type EditorPrefs } from "../lib/hooks";
 import { importFont, loadSavedFonts, SYSTEM_FONTS } from "../lib/fonts";
 import { ruleCheck } from "../lib/chars";
@@ -21,6 +24,13 @@ import { phaseName } from "../lib/plan";
 function ctx(): Ctx {
   const s = useStore.getState();
   return { work: s.work!, vols: s.vols, chars: s.chars, events: s.events, plan: s.plan, style: s.style, calls: s.calls, changesets: s.changesets };
+}
+
+/** 编辑器当前内容 */
+function snapOf(ed: Editor): Snap {
+  const plain = ed.getText({ blockSeparator: "\n" });
+  const [a, e] = aiChars(ed.state.doc);
+  return { html: ed.getHTML(), plain, words: countWords(plain), ai: a + e };
 }
 
 /** 把一段 AI 文字变成带 AI 标记的段落 */
@@ -37,7 +47,8 @@ type Panel =
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
   | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string }
   | { kind: "fill"; scene: string; text: string; done: boolean; err?: string }
-  | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; err?: string };
+  | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
+  | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null };
 
 export default function Write() {
   const work = useStore((s) => s.work)!;
@@ -54,6 +65,11 @@ export default function Write() {
   const [scanOn, setScanOn] = useState(false);
   const [words, setWords] = useState<Record<string, number>>({});
   const [todayWords, setTodayWords] = useState(0);
+  const [todayExtra, setTodayExtra] = useState({ pasted: 0, ai: 0 });
+  const style = useStore((s) => s.style);
+  const saving = useStore((s) => s.saving);
+  const savedAt = useStore((s) => s.savedAt);
+  const saveErr = useStore((s) => s.saveErr);
   const [plain, setPlain] = useState("");
   const [ai, setAi] = useState<[number, number]>([0, 0]);
   const [panel, setPanel] = useState<Panel>({ kind: "none" });
@@ -71,26 +87,45 @@ export default function Write() {
   // 全书字数
   useEffect(() => {
     repo.allTexts(work.id).then((ts) => setWords(Object.fromEntries(ts.map((t) => [t.id, t.words]))));
-    repo.dailyWords(work.id, 1).then((d) => setTodayWords(d.find((x) => x.day === today())?.words ?? 0));
+    repo.dailyWords(work.id, 1).then((d) => {
+      const t = d.find((x) => x.day === today());
+      setTodayWords(t?.words ?? 0);
+      setTodayExtra({ pasted: t?.pasted ?? 0, ai: t?.ai ?? 0 });
+    });
   }, [work.id]);
 
-  const save = useMemo(
-    () =>
-      debounce(async (id: string, ed: Editor) => {
-        const html = ed.getHTML();
-        const text = ed.getText({ blockSeparator: "\n" });
-        const w = countWords(text);
-        const [a, e] = aiChars(ed.state.doc);
-        const delta = await repo.saveText(work.id, id, html, text, w, a + e);
-        setWords((m) => ({ ...m, [id]: w }));
-        if (delta) setTodayWords((x) => x + delta);
-      }, 700),
-    [work.id],
-  );
+  const bans = useMemo(() => parseBans(style.bans).words, [style.bans]);
+  useEffect(() => setBanWords(bans), [bans]);
+
+  const extra = (kind: "pasted" | "ai", n: number) => {
+    if (!n) return;
+    setTodayExtra((x) => ({ ...x, [kind]: x[kind] + n }));
+    repo.addDailyExtra(work.id, kind, n).catch(() => {});
+  };
+
+  /** 立刻存一份（编辑器内容先同步取出，之后切章也不会串） */
+  const saveNow = async (id: string, snap: Snap) => {
+    try {
+      const r = await persistChapter(work.id, id, snap);
+      setWords((m) => ({ ...m, [id]: snap.words }));
+      if (r.delta) setTodayWords((x) => x + r.delta);
+      if (r.shrunk) shrinkToast(r.shrunk);
+    } catch {
+      /* 已经留了本机草稿，状态栏会显示失败并自动重试 */
+    }
+  };
+  const save = useMemo(() => debounce((id: string, ed: Editor) => saveNow(id, snapOf(ed)), 700), [work.id]);
 
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight],
     content: "",
+    editorProps: {
+      handlePaste: (_view, event) => {
+        const t = event.clipboardData?.getData("text/plain") ?? "";
+        extra("pasted", countWords(t));
+        return false;
+      },
+    },
     onUpdate: ({ editor: ed }) => {
       if (!loadedFor.current) return;
       setPlain(ed.getText({ blockSeparator: "\n" }));
@@ -115,11 +150,20 @@ export default function Write() {
     if (!editor || !cur) return;
     const id = cur.ch.id;
     if (loadedFor.current === id) return;
-    if (loadedFor.current) save.flush(loadedFor.current, editor);
+    const prev = loadedFor.current;
+    if (prev) {
+      const snap = snapOf(editor);
+      const p = save.pending() ? save.flush(prev, editor) : Promise.resolve();
+      p.then(() => snapshot(work.id, prev, snap, "离开本章")).catch(() => {});
+    }
     loadedFor.current = null;
     repo.loadText(id).then((t) => {
-      editor.commands.setContent(t?.html || "", false);
+      const draft = readDraft(id);
+      const useDraft = !!draft && draft.at > (t?.updated ?? 0) && draft.html !== t?.html && confirm(`这一章有一份没来得及存进数据库的草稿（${new Date(draft.at).toLocaleString()}，${draft.words} 字）。要恢复它吗？\n选「取消」会丢掉草稿，保留库里的版本。`);
+      if (draft && !useDraft) clearDraft(id);
+      loadInto(editor, useDraft ? draft!.html : t?.html || "");
       loadedFor.current = id;
+      if (useDraft) saveNow(id, snapOf(editor));
       setPlain(editor.getText({ blockSeparator: "\n" }));
       setAi(aiChars(editor.state.doc));
       setPanel({ kind: "none" });
@@ -127,8 +171,17 @@ export default function Write() {
   }, [editor, cur?.ch.id]);
 
   useEffect(() => () => {
-    if (editor && loadedFor.current) save.flush(loadedFor.current, editor);
+    if (editor && loadedFor.current && save.pending()) save.flush(loadedFor.current, editor);
   }, [editor]);
+
+  // 关窗、切书时由 store 统一冲刷正文
+  useEffect(
+    () =>
+      registerFlush(() => {
+        if (editor && loadedFor.current && save.pending()) return save.flush(loadedFor.current, editor);
+      }),
+    [editor, save],
+  );
 
   // Ctrl+Enter
   useEffect(() => {
@@ -183,7 +236,14 @@ export default function Write() {
     }
   }
 
+  /** AI 改正文之前先留一份快照 */
+  function beforeAi() {
+    if (editor && loadedFor.current) snapshot(work.id, loadedFor.current, snapOf(editor), "AI 修改前").catch(() => {});
+  }
+
   function insertInline(text: string) {
+    beforeAi();
+    extra("ai", countWords(text));
     editor
       ?.chain()
       .focus()
@@ -218,6 +278,8 @@ export default function Write() {
 
   function applySel(mode: "replace" | "after") {
     if (panel.kind !== "sel" || !editor) return;
+    beforeAi();
+    extra("ai", countWords(panel.text));
     const content = aiParas(panel.text);
     const chain = editor.chain().focus().command(({ tr }) => {
       tr.setMeta(AI_META, true);
@@ -247,6 +309,8 @@ export default function Write() {
 
   function applyFill(mode: "end" | "replace") {
     if (panel.kind !== "fill" || !editor) return;
+    beforeAi();
+    extra("ai", countWords(panel.text));
     const content = aiParas(panel.text);
     const chain = editor.chain().focus().command(({ tr }) => {
       tr.setMeta(AI_META, true);
@@ -261,12 +325,34 @@ export default function Write() {
   async function check() {
     if (!cur) return;
     const rule = ruleCheck(plain, chars, calls, vols, cur.no);
-    setPanel({ kind: "check", loading: true, rule, ai: [] });
+    setPanel({ kind: "check", loading: true, rule, ai: [], cont: [] });
+    const [a, b] = await Promise.allSettled([T.checkCharacters(ctx(), cur, plain), T.checkContinuity(ctx(), cur, plain)]);
+    const err = [a, b].find((x): x is PromiseRejectedResult => x.status === "rejected");
+    setPanel({ kind: "check", loading: false, rule, ai: a.status === "fulfilled" ? a.value : [], cont: b.status === "fulfilled" ? b.value : [], err: err ? errText(err.reason) : undefined });
+  }
+
+  async function openHistory() {
+    if (!cur) return;
+    if (editor && loadedFor.current && save.pending()) await save.flush(loadedFor.current, editor);
+    setPanel({ kind: "hist", list: await repo.listVersions(cur.ch.id), sel: null });
+  }
+
+  async function restoreVersion(v: repo.VersionFull) {
+    if (!editor || !loadedFor.current) return;
+    if (!confirm(`用 ${new Date(v.at).toLocaleString()} 的版本（${v.words} 字）替换本章？当前内容会先留一份快照。`)) return;
+    const kept = await snapshot(work.id, loadedFor.current, snapOf(editor), "恢复旧版前");
+    editor.commands.setContent(v.html, true);
+    await save.flush(loadedFor.current, editor);
+    setPanel({ kind: "hist", list: await repo.listVersions(loadedFor.current), sel: null });
+    toast(kept ? "已恢复。想反悔的话，历史里有一份「恢复旧版前」" : "已恢复");
+  }
+
+  async function copyPublish() {
     try {
-      const issues = await T.checkCharacters(ctx(), cur, plain);
-      setPanel({ kind: "check", loading: false, rule, ai: issues });
-    } catch (e) {
-      setPanel({ kind: "check", loading: false, rule, ai: [], err: errText(e) });
+      await navigator.clipboard.writeText(publishText(plain));
+      toast("已复制本章，可以直接贴到作者后台");
+    } catch {
+      toast("复制失败，请手动选中复制");
     }
   }
 
@@ -282,7 +368,7 @@ export default function Write() {
 
   const total = Object.values(words).reduce((a, b) => a + b, 0);
   const chWords = countWords(plain);
-  const scanRows = scanOn ? scan(plain) : [];
+  const scanRows = scanOn ? scan(plain, bans) : [];
   const rhythm = sentenceLengths(plain).slice(-80);
   const maxR = Math.max(10, ...rhythm);
   const people = chars.filter((c) => c.name && (plain.includes(c.name) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
@@ -400,6 +486,13 @@ export default function Write() {
             <button className="btn hide-focus" type="button" onClick={suggest} title="Ctrl+Enter">
               接下来怎么写
             </button>
+            <span className="sep hide-focus" />
+            <button className="btn hide-focus" type="button" onClick={openHistory} title="本章的历史版本">
+              历史
+            </button>
+            <button className="btn hide-focus" type="button" onClick={copyPublish} title="首行两个全角空格、段间空行，去掉 AI 标记">
+              复制发文格式
+            </button>
           </div>
 
           <article className={"sheet" + (prefs.paper === "warm" ? " paper-warm" : prefs.paper === "night" ? " paper-night" : "")}>
@@ -426,6 +519,7 @@ export default function Write() {
           </article>
 
           <div className="status" aria-live="polite">
+            <SaveState saving={saving} savedAt={savedAt} err={saveErr} retry={() => useStore.getState().flushSaves()} />
             <span>
               本章 <b>{chWords}</b> 字
             </span>
@@ -434,6 +528,11 @@ export default function Write() {
             </span>
             <span className="goal">
               今日 <b>{Math.max(0, todayWords)}</b> / {work.goal}
+              {(todayExtra.pasted > 0 || todayExtra.ai > 0) && (
+                <small title="今天粘贴进来的字数和 AI 写进正文的字数，已经算在今日字数里">
+                  （粘贴 {todayExtra.pasted}、AI {todayExtra.ai}）
+                </small>
+              )}
               <i>
                 <span style={{ width: Math.min(100, (Math.max(0, todayWords) / Math.max(1, work.goal)) * 100) + "%" }} />
               </i>
@@ -446,7 +545,17 @@ export default function Write() {
         </div>
 
         <aside className="stack side">
-          <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} />
+          {panel.kind === "hist" ? (
+            <HistoryPanel
+              panel={panel}
+              current={plain}
+              close={() => setPanel({ kind: "none" })}
+              pick={async (id) => setPanel({ ...panel, sel: await repo.getVersion(id) })}
+              restore={restoreVersion}
+            />
+          ) : (
+            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} />
+          )}
 
           <div className="panel">
             <h3>本章大纲</h3>
@@ -472,8 +581,8 @@ export default function Write() {
               <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length}>
                 按大纲生成草稿
               </button>
-              <button className="btn" type="button" onClick={check}>
-                人设检查
+              <button className="btn" type="button" onClick={check} title="人物、设定、时间线、前文、伏笔、禁用清单">
+                一致性检查
               </button>
             </div>
           </div>
@@ -533,7 +642,7 @@ export default function Write() {
 }
 
 function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void }) {
-  if (panel.kind === "none") return null;
+  if (panel.kind === "none" || panel.kind === "hist") return null;
   const close = (
     <button className="x" type="button" aria-label="关闭" onClick={() => setPanel({ kind: "none" })}>
       ×
@@ -616,7 +725,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
   return (
     <div className="panel ai-out">
       <h3>
-        <span>人设检查</span>
+        <span>人设与前后文检查</span>
         {close}
       </h3>
       {panel.rule.map((r, i) => (
@@ -625,7 +734,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           {r.quote && <div className="src">原文：{r.quote}</div>}
         </Issue>
       ))}
-      {panel.loading && <Empty>规则检查完成，正在做事实和性格检查……</Empty>}
+      {panel.loading && <Empty>规则检查完成，正在检查人物、设定、时间线和前文……</Empty>}
       {panel.err && <p className="lint bad">{panel.err}</p>}
       {panel.ai.map((x, i) => (
         <Issue key={"a" + i} lv={x.lv} actions={x.change ? <AsyncButton onClick={async () => addChange(x)}>这是成长，补一条人设变化</AsyncButton> : undefined}>
@@ -639,7 +748,84 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           )}
         </Issue>
       ))}
-      {!panel.loading && !panel.rule.length && !panel.ai.length && !panel.err && <Empty>没有发现矛盾。</Empty>}
+      {panel.cont.map((x, i) => (
+        <Issue key={"c" + i} lv={x.lv}>
+          <b>{x.kind}</b> {x.suggestion}
+          {x.quote && <div className="src">原文：{x.quote}</div>}
+          {x.conflict && (
+            <div className="src">
+              冲突：{x.conflict}
+              {x.src ? `（${x.src}）` : ""}
+            </div>
+          )}
+        </Issue>
+      ))}
+      {!panel.loading && !panel.rule.length && !panel.ai.length && !panel.cont.length && !panel.err && <Empty>没有发现矛盾。</Empty>}
+    </div>
+  );
+}
+
+function SaveState({ saving, savedAt, err, retry }: { saving: number; savedAt: number; err: string | null; retry: () => void }) {
+  if (err)
+    return (
+      <button type="button" className="save-state bad" onClick={retry} title={err}>
+        保存失败，点此重试
+      </button>
+    );
+  if (saving > 0) return <span className="save-state">保存中…</span>;
+  if (!savedAt) return <span className="save-state">已保存</span>;
+  return <span className="save-state">已保存 {new Date(savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>;
+}
+
+function HistoryPanel({ panel, current, close, pick, restore }: { panel: Extract<Panel, { kind: "hist" }>; current: string; close: () => void; pick: (id: string) => void; restore: (v: repo.VersionFull) => void }) {
+  const sel = panel.sel;
+  const parts = useMemo(() => (sel ? diffText(sel.plain ?? "", current) : []), [sel, current]);
+  return (
+    <div className="panel ai-out hist">
+      <h3>
+        <span>本章历史</span>
+        <button className="x" type="button" aria-label="关闭" onClick={close}>
+          ×
+        </button>
+      </h3>
+      {!panel.list.length && <Empty>还没有快照。写满 10 分钟、字数变化 500 字、AI 改正文前、离开本章时都会自动留一份。</Empty>}
+      <ul className="ver-list">
+        {panel.list.map((v) => (
+          <li key={v.id}>
+            <button type="button" className={"opt" + (sel?.id === v.id ? " cur" : "")} onClick={() => pick(v.id)}>
+              {new Date(v.at).toLocaleString()}
+              <small>
+                {v.words.toLocaleString()} 字 · {v.reason}
+              </small>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {sel && (
+        <>
+          <div className="legend">和当前正文比：红色删除线是当时有、现在没有的；绿色是现在新加的。</div>
+          <div className="ai-text diff">
+            {parts.map(([op, t], i) => (op === 0 ? <span key={i}>{t.length > 400 ? t.slice(0, 180) + " …… " + t.slice(-180) : t}</span> : op < 0 ? <del key={i}>{t}</del> : <ins key={i}>{t}</ins>))}
+          </div>
+          <div className="addrow">
+            <button className="btn primary" type="button" onClick={() => restore(sel)}>
+              用这一版替换本章
+            </button>
+            <button
+              className="btn"
+              type="button"
+              onClick={() =>
+                navigator.clipboard.writeText(sel.plain ?? "").then(
+                  () => toast("已复制这一版的全文，可以只贴回需要的段落"),
+                  () => toast("复制失败"),
+                )
+              }
+            >
+              复制这一版全文
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

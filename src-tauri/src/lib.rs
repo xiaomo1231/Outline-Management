@@ -1,5 +1,7 @@
-//! 墨枢的原生层只做三件事：注册插件、把 API 密钥存进系统凭据管理器、提供数据库文件路径。
+//! 墨枢的原生层只做几件事：注册插件、保证只开一个窗口、把 API 密钥存进系统凭据管理器、提供数据库文件路径。
 //! 业务逻辑都在前端 TypeScript 里。
+
+use tauri::Manager;
 
 const SERVICE: &str = "moshu";
 
@@ -32,6 +34,15 @@ fn secret_set(name: String, value: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 必须第一个注册：再次启动时不开新窗口，只把已开的窗口叫到前台。
+        // 两个窗口同时写一个数据库会互相覆盖。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useStore } from "../lib/store";
 import * as repo from "../lib/repo";
-import { Empty } from "../components/ui";
+import { AsyncButton, Empty } from "../components/ui";
+import { importPackFile, importTxtBook } from "./DataPanels";
 
 export default function Library() {
   const works = useStore((s) => s.works);
@@ -25,9 +26,27 @@ export default function Library() {
     <section className="view">
       <div className="lib-head">
         <h2>我的作品</h2>
-        <button className="btn primary" type="button" onClick={() => go("new")}>
-          新建作品
-        </button>
+        <span className="addrow" style={{ margin: 0 }}>
+          <AsyncButton
+            onClick={async () => {
+              const id = await importTxtBook();
+              if (id) await openWork(id, "outline");
+            }}
+          >
+            导入 TXT 成书
+          </AsyncButton>
+          <AsyncButton
+            onClick={async () => {
+              const id = await importPackFile();
+              if (id) await openWork(id, "write");
+            }}
+          >
+            导入作品包
+          </AsyncButton>
+          <button className="btn primary" type="button" onClick={() => go("new")}>
+            新建作品
+          </button>
+        </span>
       </div>
       {!works.length && (
         <div className="panel" style={{ maxWidth: 560 }}>
@@ -53,7 +72,7 @@ export default function Library() {
                 className="btn"
                 type="button"
                 onClick={() => {
-                  if (confirm(`删除《${w.name}》？正文、大纲、人物和记忆都会删掉，不能恢复。`)) removeWork(w.id);
+                  if (confirm(`删除《${w.name}》？整本书会放进回收站，30 天内可以在「设置 → 回收站」恢复。`)) removeWork(w.id);
                 }}
               >
                 删除

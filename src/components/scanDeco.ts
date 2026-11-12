@@ -5,6 +5,12 @@ import { PATTERNS } from "../lib/aiscan";
 
 export const scanKey = new PluginKey<boolean>("scan");
 
+/** 禁用清单里的词，由写作页设置 */
+let banWords: string[] = [];
+export function setBanWords(w: string[]) {
+  banWords = w;
+}
+
 /** 套话高亮：只是装饰，不改正文 */
 export const ScanHighlight = Extension.create({
   name: "scanHighlight",
@@ -26,6 +32,13 @@ export const ScanHighlight = Extension.create({
                 p.re.lastIndex = 0;
                 let m: RegExpExecArray | null;
                 while ((m = p.re.exec(n.text))) decos.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, { class: "cliche", title: p.label }));
+              }
+              for (const w of banWords) {
+                let i = n.text.indexOf(w);
+                while (i >= 0) {
+                  decos.push(Decoration.inline(pos + i, pos + i + w.length, { class: "cliche", title: "禁用清单" }));
+                  i = n.text.indexOf(w, i + w.length);
+                }
               }
             });
             return DecorationSet.create(state.doc, decos);

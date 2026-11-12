@@ -3,6 +3,8 @@ import { useStore, toast, type Page } from "./lib/store";
 import * as repo from "./lib/repo";
 import * as mem from "./lib/memory";
 import { isTauri } from "./lib/db";
+import * as bk from "./lib/backup";
+import { purgeOld } from "./lib/trash";
 import { MEM_DEFAULT, type EditorPrefs, type MemPrefs } from "./lib/hooks";
 import { loadSavedFonts } from "./lib/fonts";
 import { today } from "./lib/util";
@@ -33,9 +35,12 @@ export default function App() {
   const work = useStore((s) => s.work);
   const msg = useStore((s) => s.toast);
   const [ready, setReady] = useState(false);
+  const [broken, setBroken] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
+      setBroken(await bk.checkIntegrity());
+      purgeOld().catch(() => {});
       await loadSavedFonts((await repo.getSetting<Partial<EditorPrefs>>("editor", {})).fonts ?? []);
       const s = useStore.getState();
       await s.loadWorks();
@@ -46,6 +51,7 @@ export default function App() {
   }, []);
 
   useScheduler(work?.id ?? null);
+  useAutoBackup();
 
   if (!ready) return <div className="boot">墨枢</div>;
   const needWork = !work && page !== "library" && page !== "new" && page !== "settings";
@@ -76,6 +82,17 @@ export default function App() {
         </nav>
         {work && <MemoryBar work={work.id} />}
       </header>
+      {broken && (
+        <div className="banner bad" role="alert">
+          数据库检查发现问题（{broken}）。建议到「设置 → 备份与恢复」从最近一份备份恢复。
+          <button className="btn" type="button" onClick={() => useStore.getState().go("settings")}>
+            去恢复
+          </button>
+          <button className="x" type="button" aria-label="关闭" onClick={() => setBroken(null)}>
+            ×
+          </button>
+        </div>
+      )}
       <main>
         {(page === "library" || needWork) && <Library />}
         {page === "new" && <NewWork />}
@@ -123,6 +140,19 @@ function MemoryBar({ work }: { work: string }) {
       {h.overdue ? " · 今天还没结账" : h.lastScript ? ` · 上次结账 ${new Date(h.lastScript.at).toLocaleDateString()}` : ""}
     </button>
   );
+}
+
+/** 写作时每 2 小时自动备份一次数据库（结账和关窗时另有备份） */
+function useAutoBackup() {
+  useEffect(() => {
+    if (!isTauri) return;
+    const tick = async () => {
+      const last = await repo.getSetting<number>("lastBackup", 0);
+      if (Date.now() - last >= bk.BACKUP_EVERY) await bk.backup();
+    };
+    const t = setInterval(() => void tick(), 10 * 60_000);
+    return () => clearInterval(t);
+  }, []);
 }
 
 /** 每天定时结账；打开时发现漏跑就补；关窗口时跑一次脚本班 */

@@ -49,6 +49,9 @@
       "allow": [
         {
           "path": "$APPDATA/**"
+        },
+        {
+          "path": "**"
         }
       ]
     },
@@ -57,6 +60,9 @@
       "allow": [
         {
           "path": "$APPDATA/**"
+        },
+        {
+          "path": "**"
         }
       ]
     },
@@ -68,6 +74,30 @@
         },
         {
           "url": "https://*.deepseek.com/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-copy-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "**"
         }
       ]
     }
