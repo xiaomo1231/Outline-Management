@@ -462,6 +462,7 @@ function EventCard({ id, mode, close, goScene }: { id: string; mode: "simple" | 
           <>
             <span>
               已关联大纲场景：<b>{sc.s.t}</b>（第{sc.r.no}章）
+              <small className="src"> · 标题、故事时间、时刻、地点、结果、信息揭示两边自动同步</small>
             </span>
             <button className="btn" type="button" onClick={() => goScene(sc.r.ch.id, sc.i)}>
               在大纲中打开

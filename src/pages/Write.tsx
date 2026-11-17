@@ -7,7 +7,7 @@ import { ScanHighlight, scanKey, setBanWords } from "../components/scanDeco";
 import { KeepCaret } from "../components/keepCaret";
 import { Guide } from "../components/Guide";
 import { useStore, toast, registerFlush } from "../lib/store";
-import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, type Snap } from "../lib/chapterSave";
+import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraft, type Snap } from "../lib/chapterSave";
 import { diffText } from "../lib/diff";
 import { loadInto, publishText } from "../lib/editorText";
 import * as repo from "../lib/repo";
@@ -212,6 +212,15 @@ export default function Write() {
   useEffect(() => () => {
     if (editor && loadedFor.current && save.pending()) save.flush(loadedFor.current, editor);
   }, [editor]);
+
+  // 关窗那一瞬间来不及写库：先同步留一份本机草稿，下次打开会提示恢复
+  useEffect(() => {
+    const f = () => {
+      if (editor && loadedFor.current && save.pending()) writeDraft(loadedFor.current, snapOf(editor));
+    };
+    window.addEventListener("beforeunload", f);
+    return () => window.removeEventListener("beforeunload", f);
+  }, [editor, save]);
 
   // 关窗、切书时由 store 统一冲刷正文
   useEffect(

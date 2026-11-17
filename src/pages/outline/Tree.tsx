@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
 import { allChapters, applyVolumeSplit, dayLabel, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
-import { phaseName } from "../../lib/plan";
+import { phaseName, where } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
 import { cnNum, uid } from "../../lib/util";
@@ -122,6 +122,12 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
         const [item] = d[from.v].chapters.splice(from.c, 1);
         const tc = d[to.v].chapters.findIndex((c) => c.id === to.ch.id);
         d[to.v].chapters.splice(tc, 0, item);
+        // 有篇幅规划时，拖过去的章按新位置更新所属阶段
+        if (plan.length && item.pl) {
+          const no = allChapters(d as any).find((r) => r.ch.id === item.id)?.no;
+          const w = no ? where(plan, no) : null;
+          if (w) item.pl = w;
+        }
       } else {
         const [s] = d[from.v].chapters[from.c].scenes.splice(drag.s!, 1);
         const arr = d[to.v].chapters.find((c) => c.id === to.ch.id)!.scenes;
@@ -496,7 +502,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
             {ev ? (
               <>
                 <span>
-                  已关联时间线：<b>{ev.t}</b>（第 {ev.day} 天）
+                  已关联时间线：<b>{ev.t}</b>（{dayLabel(ev.day)}）<small className="src"> · 标题、故事时间、时刻、地点、结果、信息揭示两边自动同步</small>
                 </span>
                 <button className="btn" type="button" onClick={() => goEvent(ev.id)}>在时间线中查看</button>
               </>

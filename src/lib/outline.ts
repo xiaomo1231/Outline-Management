@@ -180,7 +180,8 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
     if (!t) continue;
     const id = e.id;
     const pre = e.day <= 0;
-    items.push({ key: "A" + id, sec: "A", on: !pre, lab: `「${e.t}」→ ${chapterFull(t.r)}，新建场景`, why: pre ? "这是开篇之前的前史，一般不单独写成场景，默认不勾" : t.why, run: (x, names) => { const ev = x.events.find((y) => y.id === id); if (ev && !ev.sc) eventToOutline(x.vols, ev, names); } });
+    const hid = e.ty === "hidden";
+    items.push({ key: "A" + id, sec: "A", on: !pre && !hid, lab: `「${e.t}」→ ${chapterFull(t.r)}，新建场景`, why: hid ? "这是暗线/幕后事件，读者看不到，一般不写成场景，默认不勾" : pre ? "这是开篇之前的前史，一般不单独写成场景，默认不勾" : t.why, run: (x, names) => { const ev = x.events.find((y) => y.id === id); if (ev && !ev.sc) eventToOutline(x.vols, ev, names); } });
   }
   for (const r of all)
     for (const s of r.ch.scenes) {
