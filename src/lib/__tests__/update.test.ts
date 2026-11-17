@@ -20,3 +20,11 @@ describe("自动更新选文件", () => {
     expect(pickAsset(assets.slice(0, 2), "portable")).toBeNull();
   });
 });
+
+import { noteLine } from "../ai/tasks";
+describe("续写扩写的要求", () => {
+  it("填了就优先照做，不填就按上下文和大纲", () => {
+    expect(noteLine("节奏放慢，多写心理")).toContain("节奏放慢，多写心理");
+    expect(noteLine("  ")).toContain("按前文、本章大纲和人物设定");
+  });
+});

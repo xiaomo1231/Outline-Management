@@ -203,6 +203,42 @@ ${outlineOf(c, r)}
   return (res.scenes ?? []).map((s) => ({ id: "", t: s.t, goal: s.goal || "", conf: s.conf || "", who: s.who || [], plant: s.plant || "", pay: s.pay || "", ai: true }));
 }
 
+export interface SplitChapter {
+  t: string;
+  ol: string;
+  hook?: string;
+  scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string; day?: number | null; place?: string }[];
+}
+
+/** 把一卷（或一段剧情）的大纲拆成逐章大纲，每章再给 2–4 个场景 */
+export async function splitVolume(c: Ctx, v: number, n: number): Promise<SplitChapter[]> {
+  const vol = c.vols[v];
+  const chs = allChapters(c.vols).filter((r) => r.v === v);
+  const before = allChapters(c.vols).filter((r) => r.v < v).slice(-3);
+  const res = await chatJson<{ chapters: SplitChapter[] }>(
+    [
+      sys(await stablePrefix(c, "你是小说大纲助手。只给结构和情节走向，不写正文和对白。")),
+      user(`把下面这一卷的大纲拆成 ${n} 章，按顺序给出每章的章名、本章大纲（2–4 句，写清这一章发生什么、推进了什么）、章末钩子，以及 2–4 个场景（标题、目标、冲突、出场人物，顺带埋或收的伏笔，能确定的话给故事里的第几天和地点）。
+节奏要有起伏：铺垫、推进、转折、高潮分布开，不要每章都是高潮。只用卷大纲和已有设定里的人物和事，不要编造重大新设定。
+
+卷名：${vol?.title ?? ""}
+卷大纲：
+${vol?.outline ?? ""}
+${chs.some((r) => r.ch.title || r.ch.ol || r.ch.scenes.length) ? "\n这一卷已经有的章（作者写的，要保留它们的意思，接着补全）：\n" + chs.map((r) => outlineOf(c, r)).join("\n") : ""}
+${before.length ? "\n上一卷最后几章：\n" + before.map((r) => `第${r.no}章 ${r.ch.title}${r.ch.ol ? "：" + r.ch.ol : ""}${r.ch.summary ? "（摘要：" + r.ch.summary + "）" : ""}`).join("\n") : ""}
+
+返回 JSON：{"chapters":[{"t":"章名","ol":"本章大纲","hook":"章末钩子","scenes":[{"t":"","goal":"","conf":"","who":[""],"plant":"","pay":"","day":null,"place":""}]}]}`),
+    ],
+    { temperature: 0.9 },
+  );
+  return (res.chapters ?? []).slice(0, Math.max(n, 1) + 2).map((x) => ({
+    t: String(x.t ?? ""),
+    ol: String(x.ol ?? ""),
+    hook: x.hook ? String(x.hook) : "",
+    scenes: (Array.isArray(x.scenes) ? x.scenes : []).map((s) => ({ t: String(s.t ?? "场景"), goal: s.goal || "", conf: s.conf || "", who: Array.isArray(s.who) ? s.who.filter(Boolean) : [], plant: s.plant || "", pay: s.pay || "", day: typeof s.day === "number" && s.day > 0 ? s.day : null, place: s.place || "" })),
+  }));
+}
+
 export async function fillScene(c: Ctx, r: ChRef, s: Scene): Promise<{ goal?: string; conf?: string }> {
   return chatJson(
     [
@@ -227,7 +263,7 @@ export interface TidyIssue {
 
 function outlineDigest(c: Ctx): string {
   return allChapters(c.vols)
-    .map((r) => `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : ""))
+    .map((r) => `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]${r.ch.ol ? "｜大纲：" + r.ch.ol : ""}` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : ""))
     .join("\n");
 }
 
@@ -319,12 +355,18 @@ export const SEL_OPS: Record<string, string> = {
   改对白口吻: "只改对白，让每个人说话更符合他的人设和说话方式，叙述部分不动。",
 };
 
-export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal): Promise<string> {
+/** 作者给这次续写、扩写等的额外要求；不填就按上下文和大纲来 */
+export function noteLine(note?: string): string {
+  const n = (note ?? "").trim();
+  return n ? `作者对这一次的要求（风格、走向等），优先照着做：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
+}
+
+export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string): Promise<string> {
   const ctx = r ? await chapterContext(c, r) : { text: "" };
   const res = await chat(
     [
       sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。")) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-      user(`${ctx.text}\n\n前文：\n${before.slice(-1200)}\n\n要处理的段落：\n${sel}\n\n任务：${SEL_OPS[op] ?? op}`),
+      user(`${ctx.text}\n\n前文：\n${before.slice(-1200)}\n\n要处理的段落：\n${sel}\n\n任务：${SEL_OPS[op] ?? op}\n${noteLine(note)}`),
     ],
     { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : 1.0 },
   );
