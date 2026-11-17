@@ -67,3 +67,24 @@ export function plainOf(text: string): string {
     .filter(Boolean)
     .join("\n");
 }
+
+/** 从 txt 开头猜书名、作者、简介 */
+export function guessMeta(raw: string, preface: string): { name: string; author: string; intro: string } {
+  const head = raw.replace(/\r\n?/g, "\n").split("\n").slice(0, 15).map((x) => x.trim()).filter(Boolean);
+  let name = "";
+  const bq = head.map((l) => /《([^》]{1,40})》/.exec(l)).find(Boolean);
+  if (bq) name = bq[1].trim();
+  else {
+    const first = head[0] ?? "";
+    if (first && first.length <= 30 && !CHAP.test(first) && !VOL.test(first) && !/[，。！？]/.test(first) && !/作者|简介/.test(first)) name = first.replace(/^书名[:：]\s*/, "");
+  }
+  const au = head.map((l) => /作者[:：\s]\s*([^\s，,]{1,30})/.exec(l)).find(Boolean);
+  const intro = preface
+    .split("\n")
+    .map((x) => x.trim())
+    .filter((x) => x && !x.includes(name || "\u0000") && !/^作者[:：\s]/.test(x) && !/^书名[:：]/.test(x))
+    .join("\n")
+    .replace(/^(内容)?简介[:：]?\s*/, "")
+    .slice(0, 300);
+  return { name, author: au ? au[1] : "", intro };
+}

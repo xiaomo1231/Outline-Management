@@ -8,6 +8,7 @@ import { EventActions, Events } from "./Events";
 import { Plan, PlanActions } from "./Plan";
 import { names } from "./ctx";
 import { Guide } from "../../components/Guide";
+import { RouteCard } from "../../components/RouteCard";
 
 export type Say = (node: ReactNode) => void;
 type Tab = "chars" | "tree" | "events" | "plan";
@@ -94,6 +95,34 @@ export default function Outline() {
         {tab === "events" && <EventActions mode={emode} setMode={setEmode} say={say} onSync={() => openSync("events")} />}
         {tab === "plan" && <PlanActions say={say} onSync={() => openSync("plan")} />}
       </div>
+      <RouteCard
+        go={{
+          intro: () => {
+            setTab("tree");
+            setTimeout(() => (document.querySelector('[aria-label="全书梗概"]') as HTMLElement | null)?.focus(), 50);
+          },
+          vol: () => {
+            setTab("tree");
+            setSel({ ch: null, s: -1, vol: vols[0]?.id ?? null });
+          },
+          chs: () => {
+            setTab("tree");
+            setSel({ ch: null, s: -1, vol: vols[0]?.id ?? null });
+            toast("在卷大纲下面点「AI 拆成逐章大纲」，或者自己逐章写");
+          },
+          scenes: () => {
+            setTab("tree");
+            setSel({ ch: vols[0]?.chapters[0]?.id ?? null, s: -1 });
+            setTimeout(() => (document.querySelector(".split input") as HTMLElement | null)?.focus(), 50);
+            toast("在「一句话拆成场景」里写一句这章发生什么");
+          },
+          sync: () => {
+            setTab("events");
+            openSync("events");
+          },
+          write: () => useStore.getState().go("write"),
+        }}
+      />
       <Guide id={"outline-" + tab} {...GUIDES[tab]} />
       <div className="grid-ol">
         <div>

@@ -70,3 +70,23 @@ describe("前史和负数天", () => {
     expect(d.events[0].day).toBe(-3);
   });
 });
+
+import { guessMeta, parseBook } from "../importTxt";
+describe("导入 TXT 猜书名", () => {
+  it("书名号和作者", () => {
+    const raw = "《雾港来信》\n作者：南岸\n简介：一个邮差的故事。\n\n第一章 开始\n正文";
+    const b = parseBook(raw);
+    const m = guessMeta(raw, b.preface);
+    expect(m.name).toBe("雾港来信");
+    expect(m.author).toBe("南岸");
+    expect(m.intro).toBe("一个邮差的故事。");
+  });
+  it("第一行当书名", () => {
+    const raw = "雾港来信\n\n第一章 开始\n正文";
+    expect(guessMeta(raw, parseBook(raw).preface).name).toBe("雾港来信");
+  });
+  it("第一行是章名时不当书名", () => {
+    const raw = "第一章 开始\n正文";
+    expect(guessMeta(raw, parseBook(raw).preface).name).toBe("");
+  });
+});
