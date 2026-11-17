@@ -7,7 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "要发布的版本号，例如 v0.1.0；留空只构建不发布"
+        description: "要发布的版本号，例如 v0.2.0；留空只构建不发布"
+        required: false
+        default: ""
+      notes:
+        description: "本版更新说明（可选，会写在发布页最上面；下面还会自动附上合并的 PR 列表）"
         required: false
         default: ""
 
@@ -37,6 +41,15 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # 发版时把标签里的版本号写进 package.json，桌面程序和界面上的版本号都从这里取
+      - name: 写入版本号
+        if: env.TAG != ''
+        shell: pwsh
+        run: |
+          $v = "${{ env.TAG }}".TrimStart("v")
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "版本号要写成 v1.2.3 的格式，现在是 ${{ env.TAG }}" }
+          npm version $v --no-git-tag-version --allow-same-version
+
       - name: 单元测试
         run: npm test
 
@@ -55,7 +68,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force portable | Out-Null
           Copy-Item src-tauri/target/release/moshu.exe "portable/墨枢.exe"
-          Set-Content -Encoding utf8 portable/说明.txt "双击「墨枢.exe」即可运行，不用安装。`r`n需要系统带有 Microsoft Edge WebView2 运行库（Windows 10/11 一般自带）；打不开时到 https://go.microsoft.com/fwlink/p/?LinkId=2124703 安装。`r`n作品数据存在 %APPDATA%\app.moshu.writer\ 下，换电脑时复制这个文件夹即可。"
+          Set-Content -Encoding utf8 portable/说明.txt "双击「墨枢.exe」即可运行，不用安装。`r`n需要系统带有 Microsoft Edge WebView2 运行库（Windows 10/11 一般自带）；打不开时到 https://go.microsoft.com/fwlink/p/?LinkId=2124703 安装。`r`n作品数据存在 %APPDATA%\app.moshu.writer\ 下，换电脑时复制这个文件夹即可。`r`n更新：关掉墨枢，用新版的「墨枢.exe」替换这个文件，作品数据不受影响。"
 
       - name: 上传免安装版
         uses: actions/upload-artifact@v4
@@ -81,11 +94,21 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: 墨枢 ${{ env.TAG }}
           files: release/*
+          generate_release_notes: true
           body: |
-            **安装版**：下载 `moshu_*_x64-setup.exe`，双击安装。
-            **免安装版**：下载 `moshu_*_x64-portable.zip`，解压后双击「墨枢.exe」直接运行。
+            ${{ inputs.notes }}
 
-            两个版本都需要 Windows 10/11（自带 WebView2 运行库）。作品数据存在 `%APPDATA%\app.moshu.writer\`，两个版本共用。
-            第一次打开后到「设置」里填 DeepSeek API 密钥。
+            ## 下载
 
-            本版内容：写作、大纲（人物 / 大纲 / 事件 / 篇幅规划及互相同步）、风格（含书库统计预设和拆书）、记忆与每日结账、右下角 AI 助手。
+            - **安装版**：`moshu_*_x64-setup.exe`，双击安装。
+            - **免安装版**：`moshu_*_x64-portable.zip`，解压后双击「墨枢.exe」运行。
+
+            需要 Windows 10/11（自带 WebView2 运行库）。第一次打开后到「设置」里填 DeepSeek API 密钥。
+
+            ## 从旧版本更新
+
+            1. 关掉正在运行的墨枢。（可以先到「设置 → 备份与恢复」点「立即备份」）
+            2. 安装版：直接运行新的 setup.exe，覆盖安装到原来的位置。免安装版：用新的「墨枢.exe」替换旧的。
+            3. 打开墨枢，到「设置 → 版本」确认版本号。
+
+            作品数据存在 `%APPDATA%\app.moshu.writer\`，两个版本共用，更新不会动它；新版第一次打开时会自动升级数据库。

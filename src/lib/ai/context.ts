@@ -7,7 +7,7 @@ import { describe } from "../chars";
 import * as mem from "../memory";
 import * as repo from "../repo";
 import { phaseName } from "../plan";
-import { PATTERNS } from "../aiscan";
+import { PATTERNS, parseBans } from "../aiscan";
 
 export type Ctx = WorkData & { work: Work };
 
@@ -29,7 +29,14 @@ export async function resident(c: Ctx): Promise<string> {
 
 /** 系统提示的稳定前缀 */
 export async function stablePrefix(c: Ctx, role: string): Promise<string> {
-  return `${role}\n\n=== 常驻页（这本书的核心信息）===\n${await resident(c)}`;
+  return `${role}\n\n=== 常驻页（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
+}
+
+/** 作者的禁用清单，所有任务都带上 */
+export function bansText(c: Pick<Ctx, "style">): string {
+  const { all } = parseBans(c.style?.bans);
+  if (!all.length) return "";
+  return "\n\n=== 禁用清单（作者明确不要的，任何时候都不能写，也不能换个说法写）===\n" + all.map((x) => "- " + x).join("\n");
 }
 
 function words(s: string): string[] {

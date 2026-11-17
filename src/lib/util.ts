@@ -24,15 +24,28 @@ export function htmlToText(html: string): string {
   return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function debounce<T extends (...a: any[]) => void>(fn: T, ms: number) {
+export function debounce<T extends (...a: any[]) => any>(fn: T, ms: number) {
   let t: ReturnType<typeof setTimeout> | undefined;
+  let waiting = false;
   const f = (...a: Parameters<T>) => {
     clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
+    waiting = true;
+    t = setTimeout(() => {
+      waiting = false;
+      fn(...a);
+    }, ms);
   };
-  f.flush = (...a: Parameters<T>) => {
+  /** 立刻执行（不管有没有排着的），返回 fn 的结果 */
+  f.flush = (...a: Parameters<T>): ReturnType<T> => {
     clearTimeout(t);
-    fn(...a);
+    waiting = false;
+    return fn(...a);
+  };
+  /** 有没有排队等执行的调用 */
+  f.pending = () => waiting;
+  f.cancel = () => {
+    clearTimeout(t);
+    waiting = false;
   };
   return f;
 }

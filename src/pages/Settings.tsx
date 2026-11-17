@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react";
-import { useStore, toast } from "../lib/store";
+import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
 import { DEFAULT_AI, listModels, chat, errText, type AiSettings } from "../lib/ai/client";
 import { MEM_DEFAULT, useSetting, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
-import { allChapters } from "../lib/outline";
 import { AsyncButton, Empty } from "../components/ui";
+import { BackupPanel, ExportPanel, TrashPanel } from "./DataPanels";
+import { APP_VERSION, checkUpdate, openReleasePage, RELEASES_URL, type UpdateInfo } from "../lib/update";
 
 export default function Settings() {
-  const work = useStore((s) => s.work);
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
   const [memp, setMemp] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [key, setKey] = useState("");
@@ -161,44 +161,59 @@ export default function Settings() {
 
       <div className="panel">
         <h3>数据</h3>
-        <p className="legend">{dir ? `所有数据存在：${dir}（数据库 moshu.db，备份在 backups 文件夹，保留 14 份）` : "浏览器调试版的数据存在这个浏览器里。"}</p>
-        {work && (
-          <div className="addrow">
-            <AsyncButton onClick={() => exportWork("md")}>导出本书为 Markdown</AsyncButton>
-            <AsyncButton onClick={() => exportWork("txt")}>导出本书为 TXT</AsyncButton>
-          </div>
-        )}
+        <p className="legend">{dir ? `所有数据存在：${dir}（数据库 moshu.db，备份在 backups 文件夹）` : "浏览器调试版的数据存在这个浏览器里。"}</p>
       </div>
+      <VersionPanel />
+      <ExportPanel />
+      <BackupPanel />
+      <TrashPanel />
     </section>
   );
 }
 
-async function exportWork(kind: "md" | "txt") {
-  const s = useStore.getState();
-  if (!s.work) return;
-  const parts: string[] = [kind === "md" ? `# ${s.work.name}\n\n${s.work.intro}\n` : `${s.work.name}\n\n${s.work.intro}\n`];
-  let lastVol = -1;
-  for (const r of allChapters(s.vols)) {
-    if (r.v !== lastVol) {
-      lastVol = r.v;
-      parts.push(kind === "md" ? `\n## ${s.vols[r.v].title}\n` : `\n${s.vols[r.v].title}\n`);
-    }
-    const t = await repo.loadText(r.ch.id);
-    parts.push((kind === "md" ? `\n### 第${r.no}章 ${r.ch.title}\n\n` : `\n第${r.no}章 ${r.ch.title}\n\n`) + (t?.plain ?? "").split("\n").filter(Boolean).map((p) => (kind === "txt" ? "　　" + p : p)).join(kind === "md" ? "\n\n" : "\n"));
-  }
-  const text = parts.join("\n");
-  const name = `${s.work.name}.${kind}`;
-  if (isTauri) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const path = await save({ defaultPath: name, filters: [{ name: kind.toUpperCase(), extensions: [kind] }] });
-    if (!path) return;
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    await writeTextFile(path, text);
-    toast("已导出到 " + path);
-  } else {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
-    a.download = name;
-    a.click();
-  }
+function VersionPanel() {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [err, setErr] = useState("");
+  return (
+    <div className="panel">
+      <h3>版本</h3>
+      <p className="plan-sum">
+        <span>
+          当前版本 <b>v{APP_VERSION}</b>
+        </span>
+        {info && (
+          <span>
+            最新版本 <b>{info.latest}</b>
+            {info.publishedAt && `（${new Date(info.publishedAt).toLocaleDateString()} 发布）`}
+          </span>
+        )}
+      </p>
+      <div className="addrow">
+        <AsyncButton
+          onClick={async () => {
+            setErr("");
+            try {
+              setInfo(await checkUpdate());
+            } catch (e: any) {
+              setInfo(null);
+              setErr("检查失败：" + (e?.message || e));
+            }
+          }}
+        >
+          检查更新
+        </AsyncButton>
+        {info?.newer && (
+          <AsyncButton primary onClick={() => openReleasePage(info.url)}>
+            打开 {info.latest} 的下载页
+          </AsyncButton>
+        )}
+      </div>
+      {info && !info.newer && <p className="legend">已经是最新版本。</p>}
+      {info?.newer && info.notes && <pre className="legend" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{info.notes}</pre>}
+      {err && <p className="lint bad">{err}</p>}
+      <p className="legend">
+        只有点「检查更新」时才会访问 GitHub，墨枢不会自己联网检查。更新方法：先关掉墨枢，安装版直接运行新的 setup.exe 覆盖安装；免安装版用新的「墨枢.exe」替换旧的。作品数据在 %APPDATA%\app.moshu.writer\，更新不会动它，新版第一次打开会自动升级数据库。发布页：{RELEASES_URL}
+      </p>
+    </div>
+  );
 }

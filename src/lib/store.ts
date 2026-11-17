@@ -42,13 +42,40 @@ interface State extends WorkData {
   undoChange(id: string): void;
   flash(msg: string): void;
   flushSaves(): Promise<void>;
+  /** 保存状态：正在保存几项、最近一次成功的时间、最近的错误 */
+  saving: number;
+  savedAt: number;
+  saveErr: string | null;
 }
 
 const EMPTY: WorkData = { vols: [], chars: [], events: [], plan: [], style: emptySetup(), calls: [], changesets: [] };
 
 const timers = new Map<DataKey, ReturnType<typeof setTimeout>>();
 const pending = new Map<DataKey, () => Promise<void>>();
-function scheduleSave(key: DataKey) {
+/** 页面自己管的保存（例如正文），关窗和切书时一起冲刷 */
+const flushers = new Set<() => Promise<unknown> | unknown>();
+export function registerFlush(fn: () => Promise<unknown> | unknown): () => void {
+  flushers.add(fn);
+  return () => void flushers.delete(fn);
+}
+
+/** 包住一次写库：维护保存状态。失败时记下错误并抛出，由调用方决定怎么重试 */
+export async function trackSave<T>(p: () => Promise<T>): Promise<T> {
+  useStore.setState((s) => ({ saving: s.saving + 1 }));
+  try {
+    const r = await p();
+    useStore.setState((s) => ({ saving: s.saving - 1, savedAt: Date.now(), saveErr: null }));
+    return r;
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    const first = !useStore.getState().saveErr;
+    useStore.setState((s) => ({ saving: s.saving - 1, saveErr: msg }));
+    if (first) useStore.getState().flash("保存失败：" + msg + "。会自动重试，内容先留在本机草稿里");
+    throw e;
+  }
+}
+
+function scheduleSave(key: DataKey, delay = 500) {
   const s = useStore.getState();
   if (!s.work) return;
   const wid = s.work.id;
@@ -57,11 +84,16 @@ function scheduleSave(key: DataKey) {
     pending.delete(key);
     const cur = useStore.getState();
     if (cur.work?.id !== wid) return;
-    await repo.saveDoc(wid, KIND[key], cur[key]);
+    try {
+      await trackSave(() => repo.saveDoc(wid, KIND[key], cur[key]));
+    } catch {
+      // 5 秒后再试；期间又有修改会自然合并成一次
+      if (useStore.getState().work?.id === wid && !timers.has(key)) scheduleSave(key, 5000);
+    }
   };
   clearTimeout(timers.get(key));
   pending.set(key, run);
-  timers.set(key, setTimeout(run, 500));
+  timers.set(key, setTimeout(run, delay));
 }
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -73,6 +105,9 @@ export const useStore = create<State>((set, get) => ({
   page: "library",
   chapterId: null,
   toast: null,
+  saving: 0,
+  savedAt: 0,
+  saveErr: null,
 
   async loadWorks() {
     set({ works: await repo.listWorks() });
@@ -106,11 +141,11 @@ export const useStore = create<State>((set, get) => ({
     if (!w) return;
     const nw = { ...w, ...patch, updated: Date.now() };
     set({ work: nw, works: get().works.map((x) => (x.id === nw.id ? nw : x)) });
-    repo.saveWork(nw);
+    trackSave(() => repo.saveWork(nw)).catch(() => {});
   },
 
   async removeWork(id) {
-    await repo.deleteWork(id);
+    await repo.softDeleteWork(id);
     if (get().work?.id === id) set({ ...EMPTY, work: null, page: "library" });
     await get().loadWorks();
   },
@@ -170,6 +205,13 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async flushSaves() {
+    for (const f of [...flushers]) {
+      try {
+        await f();
+      } catch {
+        /* 错误已经记进保存状态 */
+      }
+    }
     const runs = [...pending.values()];
     for (const t of timers.values()) clearTimeout(t);
     timers.clear();

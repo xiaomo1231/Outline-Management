@@ -49,6 +49,9 @@
       "allow": [
         {
           "path": "$APPDATA/**"
+        },
+        {
+          "path": "**"
         }
       ]
     },
@@ -57,6 +60,9 @@
       "allow": [
         {
           "path": "$APPDATA/**"
+        },
+        {
+          "path": "**"
         }
       ]
     },
@@ -68,6 +74,41 @@
         },
         {
           "url": "https://*.deepseek.com/*"
+        },
+        {
+          "url": "https://api.github.com/repos/xiaomo1231/Outline-Management/releases/*"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [
+        {
+          "path": "$APPDATA/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-copy-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://github.com/xiaomo1231/Outline-Management/*"
         }
       ]
     }

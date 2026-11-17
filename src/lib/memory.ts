@@ -1,6 +1,8 @@
 // 作品记忆系统：白天投票、夜里结账。
 // 脚本班不花 API 费，负责备份、结算票、升降层、对账；模型班调 DeepSeek，负责摘要、日记、常驻页、作品圣经。
-import { getDb, isTauri } from "./db";
+import { getDb } from "./db";
+import { backup } from "./backup";
+import { purgeOld } from "./trash";
 import * as repo from "./repo";
 import type { Character, Id, MemItem, StoryEvent, Volume, Work } from "./types";
 import { today, uid } from "./util";
@@ -118,9 +120,16 @@ export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry
   const lines: string[] = [];
   try {
     const db = await getDb();
-    // 1. 备份
+    // 1. 备份，顺带清理旧快照和回收站
     const b = await backup();
     lines.push(b);
+    try {
+      const pv = await repo.pruneVersions(work.id);
+      const pt = await purgeOld();
+      if (pv || pt) lines.push(`清理了 ${pv} 份旧的章节快照${pt ? `，回收站里 ${pt} 项超过 30 天，已彻底删除` : ""}。`);
+    } catch (e: any) {
+      lines.push("清理旧快照出错：" + (e?.message || e));
+    }
     // 2. 结算命中票
     const hits = await db.all<{ item_id: string; n: number }>(`SELECT item_id, COUNT(*) AS n FROM votes WHERE work_id=? AND kind='hit' AND settled=0 GROUP BY item_id`, [work.id]);
     const now = Date.now();
@@ -164,28 +173,6 @@ export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry
     return e;
   } finally {
     running = false;
-  }
-}
-
-async function backup(): Promise<string> {
-  if (!isTauri) return "浏览器调试版不做文件备份。";
-  try {
-    const db = await getDb();
-    const dir = await db.dir();
-    if (!dir) return "找不到数据目录，跳过备份。";
-    const { join } = await import("@tauri-apps/api/path");
-    const fs = await import("@tauri-apps/plugin-fs");
-    const bdir = await join(dir, "backups");
-    if (!(await fs.exists(bdir))) await fs.mkdir(bdir, { recursive: true });
-    const name = `moshu-${today()}-${Date.now()}.db`;
-    const path = await join(bdir, name);
-    await db.exec(`VACUUM INTO ?`, [path]);
-    // 只留 14 份
-    const list = (await fs.readDir(bdir)).filter((e) => e.name?.startsWith("moshu-")).map((e) => e.name!).sort();
-    for (const old of list.slice(0, Math.max(0, list.length - 14))) await fs.remove(await join(bdir, old));
-    return `已备份数据库（共留 ${Math.min(14, list.length)} 份）。`;
-  } catch (e: any) {
-    return "备份失败：" + (e?.message || e);
   }
 }
 

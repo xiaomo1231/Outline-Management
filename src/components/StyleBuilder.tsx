@@ -163,6 +163,9 @@ export default function StyleBuilder({ value, onChange }: { value: StyleSetup; o
         <div className="panel">
           <h3>我的规则（优先级最高）</h3>
           <textarea rows={4} value={s.rules} placeholder={"一行一条，例如：\n对白不用感叹号\n不写心理独白，只写动作\n主角从不说脏话"} onChange={(e) => onChange({ ...s, rules: e.target.value })} />
+          <h3 style={{ marginTop: 12 }}>禁用清单</h3>
+          <textarea rows={4} value={s.bans ?? ""} placeholder={"一行一条，AI 任何时候都不能写，例如：\n嘴角勾起\n主角心软放过反派\n配角突然降智给主角送装备"} onChange={(e) => onChange({ ...s, bans: e.target.value })} />
+          <p className="legend">8 个字以内的词会在「扫描 AI 腔」里标出来；长的套路和剧情走向只写进提示词。</p>
           <h3 style={{ marginTop: 12 }}>样章（可选）</h3>
           <textarea rows={5} value={s.samples} placeholder="贴几段你自己写的文字。AI 会模仿它的语感、句子长短和用词，不会模仿情节。" onChange={(e) => onChange({ ...s, samples: e.target.value })} />
         </div>
