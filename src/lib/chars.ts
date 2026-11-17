@@ -1,4 +1,4 @@
-import { GROUPS, fieldDef, fieldLabel, SIMPLE } from "./charFields";
+import { GROUPS, fieldDef, fieldLabel, isLocked, SIMPLE } from "./charFields";
 import type { Character, CallEntry, Volume } from "./types";
 import { allChapters, findChapter } from "./outline";
 
@@ -34,7 +34,7 @@ export function describe(c: Character, vols: Volume[], no: number, opts: { forPr
     if (!v) continue;
     if (opts.forProse && hiddenAt(c, k, no)) continue;
     const d = fieldDef(k);
-    const flag = d?.flag === "lock" ? "（锁定，不能写出矛盾）" : d?.flag === "hid" && !opts.forProse ? `（${c.rev?.[k]?.s ?? "未揭示"}）` : "";
+    const flag = isLocked(c, k) ? "（锁定，不能写出矛盾，也不能改）" : d?.flag === "hid" && !opts.forProse ? `（${c.rev?.[k]?.s ?? "未揭示"}）` : "";
     lines.push(`${fieldLabel(k)}${flag}：${v}`);
   }
   const knows = (c.knows ?? []).filter((x) => !x.ch || (findChapter(vols, x.ch)?.no ?? 0) <= no);
@@ -74,8 +74,9 @@ export function ruleCheck(text: string, chars: Character[], calls: CallEntry[], 
       const around = text.slice(Math.max(0, i - 20), i + 30);
       if (!/(想起|记得|坟|遗|生前|死去|已故|当年)/.test(around)) out.push({ lv: "r", text: `「${c.name}」在第 ${deadNo} 章已经死亡，这里又出场了。`, quote: around });
     }
-    // 锁定项：例如设定“左眉有疤”，正文写“右眉的疤”
-    const look = c.f.look || "";
+    // 锁定的外貌：例如设定“左眉有疤”，正文写“右眉的疤”。外貌设成随剧情变化时不查
+    if (!isLocked(c, "look")) continue;
+    const look = snapshot(c, vols, no).look || "";
     const side = /(左|右)(眉|眼|手|脸|耳|臂|腿)/.exec(look);
     if (side) {
       const other = (side[1] === "左" ? "右" : "左") + side[2];

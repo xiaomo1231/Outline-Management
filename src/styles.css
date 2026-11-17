@@ -341,6 +341,10 @@ table.ev tbody tr.on td{background:var(--accent-soft)}
 .dfl .lb .tg.lock{background:var(--seal-soft);color:var(--seal)}
 .dfl .lb .tg.hid{background:var(--ink);color:var(--bg)}
 .dfl .lb .tg.dyn{background:var(--accent-soft);color:var(--accent)}
+.tg.mut{border:0;cursor:pointer;font:inherit;font-size:10.5px;font-weight:400;padding:0 6px;border-radius:8px;margin-left:4px}
+.tg.mut.lock{background:var(--seal-soft);color:var(--seal)}
+.tg.mut.dyn{background:var(--accent-soft);color:var(--accent)}
+.tg.mut:hover{filter:brightness(.95);text-decoration:underline}
 .dfl textarea{font-family:var(--f-ui);font-size:13px;line-height:1.55;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);resize:vertical;min-height:34px}
 .dfl textarea.aid{background:var(--ai);border-color:var(--ai-line)}
 .dfl .rev{display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--muted)}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { GROUPS, ROLES, SIMPLE, fieldLabel } from "../../lib/charFields";
+import { GROUPS, ROLES, SIMPLE, fieldLabel, fieldMode } from "../../lib/charFields";
 import { completion, snapshot } from "../../lib/chars";
 import { allChapters, findChapter } from "../../lib/outline";
 import * as T from "../../lib/ai/tasks";
@@ -8,7 +8,7 @@ import { errText } from "../../lib/ai/client";
 import { uid } from "../../lib/util";
 import { AsyncButton, Empty } from "../../components/ui";
 import type { Say } from "./Outline";
-import type { Character, RevealState } from "../../lib/types";
+import type { Character, FieldMut, RevealState } from "../../lib/types";
 import { ctx } from "./ctx";
 
 export function CharActions({ mode, setMode, say }: { mode: "simple" | "detail"; setMode: (m: "simple" | "detail") => void; say: Say }) {
@@ -144,7 +144,10 @@ export function SimpleChars({ say }: { say: Say }) {
           </div>
           {SIMPLE.map(([k, l]) => (
             <div className="fld" key={k}>
-              <span className={k === "look" ? "lock" : ""}>{l}</span>
+              <span>
+                {l}
+                {k === "look" && <MutToggle c={c} k={k} />}
+              </span>
               <div>
                 <textarea rows={1} className={c.ai?.[k] ? "aid" : ""} aria-label={l} value={c.f[k] || ""} onChange={(e) => setField(c.id, k, e.target.value)} />
                 {c.src?.[k] && <div className="src">来源：{c.src[k]}</div>}
@@ -164,6 +167,39 @@ export function SimpleChars({ say }: { say: Say }) {
 }
 
 const FLAG: Record<string, string> = { lock: "锁定", hid: "可隐藏", dyn: "随剧情变化" };
+
+/** 字段旁边的小开关：点一下在「锁定」和「随剧情变化」之间切换 */
+function MutToggle({ c, k }: { c: Character; k: string }) {
+  const edit = useStore((s) => s.edit);
+  const m = fieldMode(c, k);
+  if (m === "hid") return null;
+  const next: FieldMut = m === "lock" ? "dyn" : "lock";
+  return (
+    <button
+      type="button"
+      className={"tg mut " + m}
+      aria-pressed={m === "lock"}
+      title={
+        m === "lock"
+          ? "锁定：AI 写正文不会改它，正文写出不一样的会报矛盾，结账时发现的变化要你点「采纳」才生效。点一下改成随剧情变化。"
+          : "随剧情变化：正文写了变化（例如毁容、换装、升级），结账时自动记进人设时间轴，之后的章节按新状态写。点一下改成锁定。"
+      }
+      onClick={() => {
+        // 改成随剧情变化时，之前被锁定拦下的变化可以一起采纳
+        const held = (c.changes ?? []).filter((x) => x.field === k && x.status === "conflict").length;
+        const adopt = next === "dyn" && held > 0 && confirm(`「${fieldLabel(k)}」有 ${held} 条之前因为锁定没有生效的变化，要一起采纳吗？`);
+        edit("chars", (d) => {
+          const p = d.find((x) => x.id === c.id);
+          if (!p) return;
+          (p.mut ??= {})[k] = next;
+          if (adopt) for (const x of p.changes ?? []) if (x.field === k && x.status === "conflict") x.status = "applied";
+        });
+      }}
+    >
+      {m === "lock" ? "锁定" : "随剧情变化"}
+    </button>
+  );
+}
 
 export function DetailChars({ say }: { say: Say }) {
   const chars = useStore((s) => s.chars);
@@ -282,7 +318,7 @@ export function DetailChars({ say }: { say: Say }) {
                 </tbody>
               </table>
             ) : (
-              <Empty>还没有变化记录。每天结账时，AI 读新写的章节，把人物的变化记在这里；锁定项的变化不会自动采纳。</Empty>
+              <Empty>还没有变化记录。每天结账时，AI 读新写的章节，把人物的变化记在这里；标了「锁定」的字段，变化要你点「采纳」才生效。字段名旁边的标签可以点，在「锁定」和「随剧情变化」之间切换。</Empty>
             )}
             <div className="legend">滑块所在章的状态：{Object.entries(snap).filter(([k, v]) => v && v !== c.f[k]).map(([k, v]) => `${fieldLabel(k)}：${v}`).join("；") || "和初始卡一样"}</div>
           </div>
@@ -305,7 +341,7 @@ export function DetailChars({ say }: { say: Say }) {
                 <div className="dfl" key={f.k}>
                   <span className="lb">
                     {f.label}
-                    {f.flag && <span className={"tg " + f.flag}>{FLAG[f.flag]}</span>}
+                    {f.flag === "hid" ? <span className="tg hid">{FLAG.hid}</span> : <MutToggle c={c} k={f.k} />}
                     {c.src?.[f.k] && <span className="src">来源：{c.src[f.k]}</span>}
                   </span>
                   <textarea rows={2} className={c.ai?.[f.k] ? "aid" : ""} placeholder={f.hint} aria-label={f.label} value={c.f[f.k] || ""} onChange={(e) => setField(c.id, f.k, e.target.value)} />
