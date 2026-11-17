@@ -47,18 +47,25 @@ export default function Settings() {
           <button
             className="btn primary"
             type="button"
+            disabled={!key.trim()}
             onClick={async () => {
               await setSecret("deepseek", key.trim());
-              setHasKey(!!key.trim());
+              setHasKey(true);
               setKey("");
-              toast(key.trim() ? (isTauri ? "密钥已存进 Windows 凭据管理器" : "密钥已保存") : "密钥已删除");
+              toast(isTauri ? "密钥已存进 Windows 凭据管理器" : "密钥已保存");
             }}
           >
-            {key.trim() ? "保存密钥" : "删除密钥"}
+            保存密钥
           </button>
           <AsyncButton
             onClick={async () => {
               try {
+                // 填了新密钥还没点保存，就先替作者存上
+                if (key.trim()) {
+                  await setSecret("deepseek", key.trim());
+                  setHasKey(true);
+                  setKey("");
+                }
                 const m = await listModels();
                 setModels(m);
                 const r = await chat([{ role: "user", content: "回复两个字：可以" }], { maxTokens: 10 });
@@ -70,7 +77,25 @@ export default function Settings() {
           >
             测试连接并获取模型
           </AsyncButton>
+          {hasKey && (
+            <button
+              className="btn"
+              type="button"
+              style={{ marginLeft: "auto" }}
+              onClick={async () => {
+                if (!confirm("删除已保存的 DeepSeek 密钥？删除后 AI 功能都用不了，要重新填写才能恢复。")) return;
+                await setSecret("deepseek", "");
+                setHasKey(false);
+                toast("密钥已删除");
+              }}
+            >
+              删除密钥
+            </button>
+          )}
         </div>
+        <p className="legend">
+          墨枢的 AI 功能用的是 DeepSeek（深度求索）的接口。到 platform.deepseek.com 注册、充值后在「API keys」里创建一个密钥，粘贴到上面。按用量计费，写作日常用一般每天几分钱到几毛钱，下面的「用量」里能看到。
+        </p>
         {msg && <p className="legend">{msg}</p>}
         <div className="meta-row" style={{ marginTop: 10 }}>
           <label>

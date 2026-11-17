@@ -262,9 +262,18 @@ export interface TidyIssue {
 }
 
 function outlineDigest(c: Ctx): string {
+  let lastV = -1;
   return allChapters(c.vols)
-    .map((r) => `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]${r.ch.ol ? "｜大纲：" + r.ch.ol : ""}` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : ""))
+    .map((r) => {
+      const head = r.v !== lastV ? `【${c.vols[r.v].title}】${c.vols[r.v].outline?.trim() ? "卷大纲：" + c.vols[r.v].outline!.trim() : ""}\n` : "";
+      lastV = r.v;
+      return head + chLine(r);
+    })
     .join("\n");
+}
+
+function chLine(r: ChRef): string {
+  return `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]${r.ch.ol ? "｜大纲：" + r.ch.ol : ""}` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : "");
 }
 
 export async function tidyOutline(c: Ctx): Promise<TidyIssue[]> {

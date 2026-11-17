@@ -58,20 +58,21 @@ describe("大纲、时间线、篇幅规划同步", () => {
   };
 
   it("大纲 → 时间线：没关联的场景变成事件，并互相关联", () => {
-    const d = run({ vols: vols(), events: [], plan: [] }, (k) => k.startsWith("B"));
+    const d = run({ vols: vols(), events: [], plan: [] }, (k) => k.startsWith("B") && !k.startsWith("BC"));
     expect(d.events).toHaveLength(1);
     const sc = d.vols[0].chapters[0].scenes[0];
     expect(d.events[0].sc).toBe(sc.id);
     expect(sc.ev).toBe(d.events[0].id);
     expect(d.events[0].place).toBe("钟表铺");
     // 再同步一次不会重复
-    expect(buildSync(d).items.filter((i) => i.sec === "B")).toHaveLength(0);
+    expect(buildSync(d).items.filter((i) => i.sec === "B" && !i.key.startsWith("BC"))).toHaveLength(0);
   });
 
   it("篇幅规划 → 大纲：给章标阶段，补建空章是可选项", () => {
     const plan = [newArc("雾港失踪案", "mystery", 6, 1)];
     const items = buildSync({ vols: vols(), events: [], plan }).items;
-    expect(items.find((i) => i.key === "C1")?.on).toBe(true);
+    // 会改动大量章节，默认不勾，作者确认后再勾
+    expect(items.find((i) => i.key === "C1")?.on).toBe(false);
     expect(items.find((i) => i.key === "C3")?.on).toBe(false);
     const d = run({ vols: vols(), events: [], plan }, (k) => k === "C1" || k === "C3");
     const chs = allChapters(d.vols);

@@ -66,12 +66,30 @@ function splitWho(w: string, names: string[]): string[] {
     .map((n) => names.find((k) => k === n || k.includes(n)) || n);
 }
 
+/**
+ * 没填故事时间时推断第几天：本章场景里有就用本章的；
+ * 否则从前面最近一个填了时间的章往后数，每章算一天；前面都没填，就按「第 N 章 ≈ 第 N 天」。
+ */
 export function guessDay(vols: Volume[], r: ChRef): number {
+  return dayGuess(vols, r).day;
+}
+export function dayGuess(vols: Volume[], r: ChRef): { day: number; sure: boolean } {
   const own = r.ch.scenes.map((s) => s.day).filter((d): d is number => !!d);
-  if (own.length) return Math.max(...own);
-  let best = 1;
-  for (const x of allChapters(vols)) if (x.no < r.no) for (const s of x.ch.scenes) if (s.day && s.day >= best) best = s.day;
-  return best;
+  if (own.length) return { day: Math.max(...own), sure: true };
+  let at: { no: number; day: number } | null = null;
+  for (const x of allChapters(vols)) {
+    if (x.no >= r.no) break;
+    const ds = x.ch.scenes.map((s) => s.day).filter((d): d is number => !!d);
+    if (ds.length) at = { no: x.no, day: Math.max(...ds) };
+  }
+  return at ? { day: at.day + (r.no - at.no), sure: false } : { day: r.no, sure: false };
+}
+
+/** 没有场景的章，用章名和本章大纲在时间线上记一条事件 */
+export function chapterToEvent(vols: Volume[], events: StoryEvent[], r: ChRef): StoryEvent {
+  const e: StoryEvent = { id: uid("e"), day: guessDay(vols, r), ch: r.ch.id, t: r.ch.title || `第${r.no}章`, who: "", ty: "main", process: r.ch.ol || "", from: "大纲（整章）" };
+  events.push(e);
+  return e;
 }
 
 export function targetChapter(vols: Volume[], e: StoryEvent): { r: ChRef; why: string } | null {
@@ -161,8 +179,17 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
     for (const s of r.ch.scenes) {
       if (s.ev) continue;
       const sid = s.id;
-      items.push({ key: "B" + sid, sec: "B", on: true, lab: `「${s.t}」→ 第 ${s.day || guessDay(d.vols, r)} 天，新建事件`, why: s.day ? "故事时间取自场景" : "场景没填故事时间，按前后章推断", run: (x) => { const f = findScene(x.vols, sid); if (f && !f.s.ev) sceneToEvent(x.vols, x.events, f.s, f.r); } });
+      const g = dayGuess(d.vols, r);
+      items.push({ key: "B" + sid, sec: "B", on: !!s.day || g.sure, lab: `「${s.t}」→ 第 ${s.day || g.day} 天，新建事件`, why: s.day ? "故事时间取自场景" : g.sure ? "场景没填故事时间，取本章其他场景的" : "没填故事时间，暂按章节顺序推断（一章算一天），确认后再勾", run: (x) => { const f = findScene(x.vols, sid); if (f && !f.s.ev) sceneToEvent(x.vols, x.events, f.s, f.r); } });
     }
+  // 还没有场景、但写了章名或本章大纲的章，整章记一条事件
+  for (const r of all) {
+    if (r.ch.scenes.length || !(r.ch.title.trim() || r.ch.ol?.trim())) continue;
+    if (d.events.some((e) => e.ch === r.ch.id)) continue;
+    const cid = r.ch.id;
+    const g = dayGuess(d.vols, r);
+    items.push({ key: "BC" + cid, sec: "B", on: true, lab: `第${r.no}章「${r.ch.title || "（未命名）"}」整章 → 第 ${g.day} 天，新建事件`, why: "这一章还没有场景，用章名和本章大纲记一条；天数按章节顺序推断，进时间线后可以改", run: (x) => { const f = allChapters(x.vols).find((y) => y.ch.id === cid); if (f && !x.events.some((e) => e.ch === cid)) chapterToEvent(x.vols, x.events, f); } });
+  }
   if (!d.plan.length) return { items, notes };
 
   const untag: string[] = [];
@@ -182,7 +209,7 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
   const tag = (ids: string[]) => (x: SyncData) => {
     for (const r of allChapters(x.vols)) if (ids.includes(r.ch.id)) { const w = where(x.plan, r.no); if (w) x.vols[r.v].chapters[r.c].pl = w; }
   };
-  if (untag.length) items.push({ key: "C1", sec: "C", on: true, lab: `给 ${untag.length} 个还没归属的章标上事件段和阶段`, why: all.filter((r) => untag.includes(r.ch.id)).map((r) => `第${r.no}章 ${phaseName(d.plan, where(d.plan, r.no))}`).join("；"), run: tag(untag) });
+  if (untag.length) items.push({ key: "C1", sec: "C", on: false, lab: `给 ${untag.length} 个还没归属的章标上事件段和阶段`, why: all.filter((r) => untag.includes(r.ch.id)).map((r) => `第${r.no}章 ${phaseName(d.plan, where(d.plan, r.no))}`).join("；"), run: tag(untag) });
   if (mism.length) items.push({ key: "C2", sec: "C", on: false, lab: `按规划改回 ${mism.length} 个章的归属，会覆盖你在大纲里改过的`, why: mismWhy.join("；"), run: tag(mism) });
   const N = bookLen(d.plan);
   if (N > maxN)
@@ -253,15 +280,18 @@ export interface SplitChapterIn {
  * 把 AI 拆好的逐章大纲放进第 v 卷：按顺序先填这一卷已有的章（只填空着的章名、大纲、钩子；
  * 已经有场景的章不加场景），不够再在卷末新建章。新场景自动加进时间线。
  */
-export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number, list: SplitChapterIn[], toTimeline = true): { filled: number; added: number; scenes: number } {
+export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number, list: (SplitChapterIn | null)[], toTimeline = true): { filled: number; added: number; scenes: number } {
   const vol = vols[v];
   let filled = 0;
   let added = 0;
   let scenes = 0;
   const fresh = new Set<string>();
   if (!vol) return { filled, added, scenes };
+  const base = vol.chapters.length;
   list.forEach((x, i) => {
-    let ch = vol.chapters[i];
+    // 没勾选的跳过
+    if (!x) return;
+    let ch = i < base ? vol.chapters[i] : undefined;
     if (ch) {
       let touched = false;
       if (!ch.title.trim() && x.t) (ch.title = x.t), (touched = true);
@@ -292,4 +322,42 @@ export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number
     sortEvents(events);
   }
   return { filled, added, scenes };
+}
+
+/** 「快速加多章」：一行一章，「｜」或「|」分开章名、本章大纲、章末钩子 */
+export function parseQuickChapters(text: string): { t: string; ol: string; hook: string }[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [t = "", ol = "", hook = ""] = l.split(/\s*[｜|]\s*/);
+      return { t: t.replace(/^第[0-9一二三四五六七八九十百千]+章[\s：:、.]*/, "").trim(), ol: ol.trim(), hook: hook.trim() };
+    });
+}
+
+/** AI 回答的第一行有用的话，跳过「好的，下面是……：」这类开场白和 Markdown 符号 */
+export function firstLine(text: string): string {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^[\s#>*\-•\d.、]+/, "").replace(/[*_`]/g, "").trim())
+    .filter(Boolean);
+  const good = lines.find((l) => !/^(好的|当然|以下|下面|这是|没问题)/.test(l) && !/[:：]$/.test(l));
+  return good ?? lines[0] ?? "";
+}
+
+/** 把「第1章 …… 第2章 ……」形式的多章大纲拆开 */
+export function splitChapterOutline(text: string): { t: string; ol: string }[] {
+  const out: { t: string; ol: string[] }[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const l = raw.replace(/^[\s#>*\-•]+/, "").replace(/[*_`]/g, "").trim();
+    if (!l) continue;
+    const m = /^第\s*([0-9一二三四五六七八九十百]+)\s*章[\s：:、.，,—\-]*(.*)$/.exec(l);
+    if (m) {
+      const rest = m[2].trim();
+      const [t, ...more] = rest.split(/[：:｜|—]\s*/);
+      out.push({ t: (t || `第${m[1]}章`).trim(), ol: more.length ? [more.join("：").trim()] : [] });
+    } else if (out.length) out[out.length - 1].ol.push(l);
+  }
+  return out.map((x) => ({ t: x.t.slice(0, 30), ol: x.ol.join(" ").slice(0, 400) }));
 }

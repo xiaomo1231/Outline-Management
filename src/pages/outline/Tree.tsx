@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, applyVolumeSplit, findScene, newChapter, newScene, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
+import { allChapters, applyVolumeSplit, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
 import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
@@ -10,6 +10,7 @@ import type { Say } from "./Outline";
 import type { Scene } from "../../lib/types";
 import { ctx, names } from "./ctx";
 import { trashChapter, trashScene } from "../../lib/trash";
+import * as repo from "../../lib/repo";
 
 /** 选中的章和场景（场景序号 -1 表示只选了章） */
 export interface Sel {
@@ -36,7 +37,7 @@ export function TreeActions({ mode, setMode, say, onSync, sel, setSel }: { mode:
         同步
       </button>
       <AsyncButton primary onClick={() => tidy(say, setSel)}>
-        AI 梳理大纲
+        AI 检查大纲
       </AsyncButton>
       <span hidden>{sel.ch}</span>
     </div>
@@ -44,7 +45,10 @@ export function TreeActions({ mode, setMode, say, onSync, sel, setSel }: { mode:
 }
 
 async function tidy(say: Say, setSel: (s: Sel) => void) {
-  say(<Empty>正在读全书大纲……</Empty>);
+  const vs = useStore.getState().vols;
+  const empty = !vs.some((v) => v.outline?.trim() || v.chapters.some((c) => c.title.trim() || c.ol?.trim() || c.scenes.length));
+  if (empty) return say(<Empty>大纲还是空的，没什么可检查的。先点卷名旁的「卷大纲」写这一卷的走向，或者给几章写上本章大纲，再来检查断线、伏笔和节奏。</Empty>);
+  say(<Empty>正在读全书大纲，找断线、没收的伏笔和节奏问题……</Empty>);
   try {
     const issues = await T.tidyOutline(ctx());
     const show = (done: Record<number, boolean>) =>
@@ -506,6 +510,7 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
   const chs = allChapters(vols).filter((r) => r.v === vi);
   const [n, setN] = useState<number>(v.plan || Math.max(chs.length, 6));
   const [tl, setTl] = useState(true);
+  const [quick, setQuick] = useState<string | null>(null);
   const setV = (k: "outline" | "plan", val: any) => edit("vols", (d) => void ((d[vi] as any)[k] = val));
   const setOl = (c: number, k: "title" | "ol", val: string) => edit("vols", (d) => void ((d[vi].chapters[c] as any)[k] = val));
 
@@ -538,18 +543,7 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
             say(<Empty>正在把卷大纲拆成 {n} 章……</Empty>);
             try {
               const list = await T.splitVolume(ctx(), vi, n);
-              let res = { filled: 0, added: 0, scenes: 0 };
-              useStore.getState().aiEdit(`拆卷大纲：${v.title}`, ["vols", "events"], (d) => {
-                res = applyVolumeSplit(d.vols as any, d.events as any, vi, list, tl);
-              });
-              say(
-                <>
-                  <p style={{ margin: "0 0 6px" }}>
-                    拆成了 {list.length} 章：补全已有的 {res.filled} 章，新建 {res.added} 章，一共 {res.scenes} 个场景{tl ? "，都加进了时间线" : ""}。
-                  </p>
-                  <p className="empty" style={{ margin: 0 }}>你已经写过的章名、大纲和场景都没动，只填了空着的地方。不满意可以在「记忆」页的变更记录里整组撤销。</p>
-                </>,
-              );
+              say(<SplitPreview vi={vi} list={list} tl={tl} done={(node) => say(node)} />);
             } catch (e) {
               say(<p className="lint bad">{errText(e)}</p>);
             }
@@ -574,8 +568,102 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
           </div>
         ))}
       </div>
-      <button className="btn" type="button" onClick={() => edit("vols", (d) => void d[vi].chapters.push(newChapter("")))}>
-        ＋ 在这一卷加一章
+      <div className="addrow" style={{ flexWrap: "wrap" }}>
+        <button className="btn" type="button" onClick={() => edit("vols", (d) => void d[vi].chapters.push(newChapter("")))}>
+          ＋ 在这一卷加一章
+        </button>
+        <button className="btn" type="button" onClick={() => setQuick(quick === null ? "" : null)}>
+          {quick === null ? "一次加多章" : "收起"}
+        </button>
+      </div>
+      {quick !== null && (
+        <div style={{ marginTop: 8 }}>
+          <textarea
+            rows={5}
+            value={quick}
+            placeholder={"一行一章，用「｜」分开章名、本章大纲、章末钩子（后两项可以不写）：\n初到边城｜主角报到，被派去守最破的城门｜城门外有人在夜里挖地道\n夜巡｜第一次出城巡查，撞见走私车队\n顺藤摸瓜"}
+            onChange={(e) => setQuick(e.target.value)}
+          />
+          <div className="addrow">
+            <button
+              className="btn primary"
+              type="button"
+              disabled={!quick.trim()}
+              onClick={async () => {
+                const list = parseQuickChapters(quick);
+                // 先填这一卷里完全空着的章（没章名、没大纲、没场景、没正文），比如新书自带的第一章
+                const blank: string[] = [];
+                for (const c of v.chapters) {
+                  if (c.title.trim() || c.ol?.trim() || c.scenes.length) continue;
+                  const t = await repo.loadText(c.id);
+                  if (!t?.words) blank.push(c.id);
+                }
+                edit("vols", (d) => {
+                  const q = [...list];
+                  for (const c of d[vi].chapters) {
+                    if (!q.length || !blank.includes(c.id)) continue;
+                    const x = q.shift()!;
+                    Object.assign(c, { title: x.t, ol: x.ol, hook: x.hook });
+                  }
+                  for (const x of q) d[vi].chapters.push({ ...newChapter(x.t), ol: x.ol, hook: x.hook });
+                });
+                toast(`加了 ${list.length} 章`);
+                setQuick(null);
+              }}
+            >
+              加进这一卷（{parseQuickChapters(quick).length} 章）
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SplitPreview({ vi, list, tl, done }: { vi: number; list: T.SplitChapter[]; tl: boolean; done: (n: ReturnType<typeof Empty>) => void }) {
+  const vols = useStore((s) => s.vols);
+  const [on, setOn] = useState<boolean[]>(() => list.map(() => true));
+  const chs = vols[vi]?.chapters ?? [];
+  return (
+    <div>
+      <p style={{ margin: "0 0 4px" }}>
+        <b>拆章预览</b>
+      </p>
+      <p className="empty" style={{ margin: "0 0 8px" }}>
+        勾选要用的章。已有的章只填空着的章名、大纲和钩子，已经有场景的章不加场景；多出来的在卷末新建。
+      </p>
+      {list.map((x, i) => {
+        const ex = chs[i];
+        return (
+          <label className="sy-i" key={i}>
+            <input type="checkbox" checked={on[i]} onChange={(e) => setOn(on.map((v, j) => (j === i ? e.target.checked : v)))} />
+            <span>
+              <b>{ex ? `补第 ${i + 1} 章` : "新建"}：{x.t}</b>
+              <small>{x.ol}</small>
+              {x.scenes.length > 0 && <small>场景：{x.scenes.map((s) => s.t).join("、")}{ex?.scenes.length ? "（这一章已有场景，不加）" : ""}</small>}
+            </span>
+          </label>
+        );
+      })}
+      <button
+        className="btn primary"
+        type="button"
+        disabled={!on.some(Boolean)}
+        onClick={() => {
+          let res = { filled: 0, added: 0, scenes: 0 };
+          const v = useStore.getState().vols[vi];
+          useStore.getState().aiEdit(`拆卷大纲：${v?.title ?? ""}`, ["vols", "events"], (d) => {
+            res = applyVolumeSplit(d.vols as any, d.events as any, vi, list.map((x, i) => (on[i] ? x : null)), tl);
+          });
+          toast(`已写进大纲：补全 ${res.filled} 章，新建 ${res.added} 章`);
+          done(
+            <Empty>
+              补全已有的 {res.filled} 章，新建 {res.added} 章，一共 {res.scenes} 个场景{tl ? "，都加进了时间线" : ""}。你写过的内容没动。不满意可以在「记忆」页的变更记录里整组撤销。
+            </Empty>,
+          );
+        }}
+      >
+        写进大纲（{on.filter(Boolean).length} 章）
       </button>
     </div>
   );
