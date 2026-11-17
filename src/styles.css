@@ -540,3 +540,10 @@ table.lanes tbody th{white-space:nowrap;text-align:left;position:sticky;left:0;b
 .tl .pre .day{color:var(--muted);font-style:italic}
 .dup{background:rgba(200,150,40,.12);border-radius:8px;padding:6px 10px;margin:6px 0;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .evd h3,.panel h3:has(.seg){display:flex;justify-content:space-between;align-items:center;gap:8px}
+.lbl-num{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--muted);white-space:nowrap}
+.sy-warn{background:rgba(200,80,40,.08);border-radius:6px;padding:4px}
+.warn-t{color:#B5532D !important;font-weight:600}
+.grp.shut>.note,.grp.shut>.rows,.grp.shut>.addf{display:none}
+.grp header .fold{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer}
+.mc-form{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.mc-form input{flex:1;min-width:160px}

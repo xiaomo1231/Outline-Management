@@ -209,6 +209,9 @@ export function DetailChars({ say }: { say: Say }) {
   const [newF, setNewF] = useState<Record<string, string>>({});
   const chs = allChapters(vols);
   const [at, setAt] = useState<number | null>(null);
+  // 详细版字段很多，分组默认收起，只展开第一组
+  const [openG, setOpenG] = useState<Record<string, boolean>>({ [GROUPS[0]?.id ?? ""]: true });
+  const [mc, setMc] = useState<{ ch: string; field: string; to: string; cause: string } | null>(null);
   const c: Character | undefined = chars[Math.min(sel, chars.length - 1)];
   if (!c) return <Empty>还没有人物。</Empty>;
   const ci = chars.indexOf(c);
@@ -250,7 +253,7 @@ export function DetailChars({ say }: { say: Say }) {
           </div>
           <div className="cd-nav">
             {GROUPS.map((g) => (
-              <a key={g.id} href={"#g-" + g.id} onClick={(e) => (e.preventDefault(), document.getElementById("g-" + g.id)?.scrollIntoView({ behavior: "smooth" }))}>
+              <a key={g.id} href={"#g-" + g.id} onClick={(e) => { e.preventDefault(); setOpenG({ ...openG, [g.id]: true }); setTimeout(() => document.getElementById("g-" + g.id)?.scrollIntoView({ behavior: "smooth" }), 0); }}>
                 {g.name}
                 <i>
                   {comp.groups[g.id][0]}/{comp.groups[g.id][1]}
@@ -320,14 +323,56 @@ export function DetailChars({ say }: { say: Say }) {
             ) : (
               <Empty>还没有变化记录。每日整理时，AI 读新写的章节，把人物的变化记在这里；标了「锁定」的字段，变化要你点「采纳」才生效。字段名旁边的标签可以点，在「锁定」和「随剧情变化」之间切换。</Empty>
             )}
+            {mc ? (
+              <div className="mc-form">
+                <select value={mc.ch} aria-label="哪一章" onChange={(e) => setMc({ ...mc, ch: e.target.value })}>
+                  {chs.map((r) => (
+                    <option key={r.ch.id} value={r.ch.id}>
+                      第{r.no}章 {r.ch.title}
+                    </option>
+                  ))}
+                </select>
+                <select value={mc.field} aria-label="哪一项" onChange={(e) => setMc({ ...mc, field: e.target.value })}>
+                  {GROUPS.flatMap((g) => g.fields.filter((f) => f.flag !== "hid")).map((f) => (
+                    <option key={f.k} value={f.k}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                <input value={mc.to} placeholder="变成什么，例如：左脸有一道疤" aria-label="变成" onChange={(e) => setMc({ ...mc, to: e.target.value })} />
+                <input value={mc.cause} placeholder="原因，例如：火场救人被烧伤" aria-label="原因" onChange={(e) => setMc({ ...mc, cause: e.target.value })} />
+                <button
+                  className="btn primary"
+                  type="button"
+                  disabled={!mc.to.trim() || !mc.ch}
+                  onClick={() => {
+                    const from = snapshot(c, vols, Math.max(0, (findChapter(vols, mc.ch)?.no ?? 1) - 1))[mc.field] ?? c.f[mc.field] ?? "";
+                    edit("chars", (d) => void (d[ci].changes ??= []).push({ id: uid("cc"), ch: mc.ch, field: mc.field, from, to: mc.to.trim(), cause: mc.cause.trim(), by: "author", at: Date.now(), status: "applied" }));
+                    setMc(null);
+                    toast("已加进人设时间轴");
+                  }}
+                >
+                  加上
+                </button>
+                <button className="btn" type="button" onClick={() => setMc(null)}>
+                  取消
+                </button>
+              </div>
+            ) : (
+              <button className="btn sm" type="button" disabled={!chs.length} onClick={() => setMc({ ch: chs[Math.max(0, Math.min(no, chs.length) - 1)]?.ch.id ?? "", field: GROUPS.flatMap((g) => g.fields).find((f) => f.flag !== "hid")?.k ?? "", to: "", cause: "" })}>
+                ＋ 手动加一条变化
+              </button>
+            )}
             <div className="legend">滑块所在章的状态：{Object.entries(snap).filter(([k, v]) => v && v !== c.f[k]).map(([k, v]) => `${fieldLabel(k)}：${v}`).join("；") || "和初始卡一样"}</div>
           </div>
         </div>
 
         {GROUPS.map((g) => (
-          <div className="grp" id={"g-" + g.id} key={g.id}>
+          <div className={"grp" + (openG[g.id] ? "" : " shut")} id={"g-" + g.id} key={g.id}>
             <header>
-              <b>{g.name}</b>
+              <button type="button" className="fold" aria-expanded={!!openG[g.id]} onClick={() => setOpenG({ ...openG, [g.id]: !openG[g.id] })}>
+                {openG[g.id] ? "▾" : "▸"} <b>{g.name}</b>
+              </button>
               <span className="cnt">
                 {comp.groups[g.id][0]}/{comp.groups[g.id][1]}
               </span>

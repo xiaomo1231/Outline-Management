@@ -206,7 +206,10 @@ export function Plan({ say }: { say: Say }) {
                       ))}
                     </select>
                     <input value={p.n} aria-label="阶段名" onChange={(e) => edit("plan", (d) => void (d[ai].ph[pi].n = e.target.value))} />
-                    <input type="number" min={1} value={p.c} aria-label="章数" onChange={(e) => edit("plan", (d) => void (d[ai].ph[pi].c = Math.max(1, +e.target.value || 1)))} />
+                    <label className="lbl-num">
+                      <input type="number" min={1} value={p.c} aria-label="章数" onChange={(e) => edit("plan", (d) => void (d[ai].ph[pi].c = Math.max(1, +e.target.value || 1)))} />
+                      章
+                    </label>
                     <input className={"goal" + (p.ai ? " aid" : "")} value={p.g} placeholder="这一阶段要完成什么（只写目标，不写细节）" aria-label="阶段目标" onChange={(e) => edit("plan", (d) => { d[ai].ph[pi].g = e.target.value; d[ai].ph[pi].ai = false; })} />
                     <button className="x" type="button" aria-label="删除阶段" onClick={() => a.ph.length > 1 && edit("plan", (d) => void d[ai].ph.splice(pi, 1))}>
                       ×
@@ -252,8 +255,16 @@ export function Plan({ say }: { say: Say }) {
               </option>
             ))}
           </select>
-          <input type="number" min={3} value={na.total} aria-label="总章数" style={{ maxWidth: 80 }} onChange={(e) => setNa({ ...na, total: +e.target.value })} />
-          <input type="number" min={0} value={na.gap} aria-label="与上一段间隔章数" style={{ maxWidth: 80 }} onChange={(e) => setNa({ ...na, gap: +e.target.value })} />
+          <label className="lbl-num">
+            共
+            <input type="number" min={3} value={na.total} aria-label="总章数" style={{ maxWidth: 70 }} onChange={(e) => setNa({ ...na, total: +e.target.value })} />
+            章
+          </label>
+          <label className="lbl-num">
+            和上一段隔
+            <input type="number" min={0} value={na.gap} aria-label="与上一段间隔章数" style={{ maxWidth: 60 }} onChange={(e) => setNa({ ...na, gap: +e.target.value })} />
+            章
+          </label>
           <button
             className="btn primary"
             type="button"
@@ -270,13 +281,13 @@ export function Plan({ say }: { say: Say }) {
                       </li>
                     ))}
                   </ul>
-                  <p className="empty" style={{ margin: 0 }}>比例来自这个类型的常见节奏。浅黄底的阶段目标是自动填的，只是方向，不含具体情节。</p>
+                  <p className="empty" style={{ margin: 0 }}>各阶段章数按这个类型的常见比例分配，只是参考，可以直接改数字。浅黄底的阶段目标是自动填的，只是方向，不含具体情节。</p>
                 </>,
               );
               setNa({ ...na, name: "" });
             }}
           >
-            按类型分配后添加
+            按类型常见比例分配后添加
           </button>
         </div>
         <div className="legend">依次是：事件名、类型、总章数、与上一段隔几章。之后都可以手动调。</div>

@@ -143,6 +143,8 @@ function SyncPanel({ focus, done }: { focus: Tab; done: (n: ReactNode) => void }
   const order: SyncSec[] = focus === "events" ? ["A", "B", "C", "D"] : focus === "plan" ? ["C", "D", "A", "B"] : ["B", "A", "D", "C"];
 
   function run() {
+    const big = items.find((i) => i.key === "C3");
+    if (big && on.C3 && !confirm(`你勾了「${big.lab}」。\n这会在大纲最后一卷一次性加很多空章（只有章号和阶段，没有内容），目录会变得很长。\n确定要建吗？不想要的话，取消后把这一项的勾去掉。`)) return;
     const picked: SyncItem[] = [];
     for (const k of RUN_ORDER) for (const it of items) if (it.sec === k && on[it.key]) picked.push(it);
     const nm = names();
@@ -187,11 +189,12 @@ function SyncPanel({ focus, done }: { focus: Tab; done: (n: ReactNode) => void }
               <small>{SEC[k][1]}</small>
             </div>
             {its.map((p) => (
-              <label className="sy-i" key={p.key}>
+              <label className={"sy-i" + (p.key === "C3" ? " sy-warn" : "")} key={p.key}>
                 <input type="checkbox" checked={!!on[p.key]} onChange={(e) => setOn({ ...on, [p.key]: e.target.checked })} />
                 <span>
                   {p.lab}
                   {p.why && <small>{p.why}</small>}
+                  {p.key === "C3" && <small className="warn-t">⚠ 会一次性新建很多空章，一般用不到；只有想先把整本的章号排出来时才勾。</small>}
                 </span>
               </label>
             ))}
