@@ -16,17 +16,31 @@ Windows 桌面小说写作工具。AI 用你自己的 DeepSeek 密钥，所有�
 
 ## 安装
 
-在 GitHub 仓库的 **Actions → 构建 Windows 安装包** 里打开最近一次成功的运行，下载 `moshu-windows-setup`，解压后运行里面的 `墨枢_x.y.z_x64-setup.exe`。
+到 [Releases](https://github.com/xiaomo1231/Outline-Management/releases/latest) 下载最新版：
 
-**免安装版**：同一个页面里下载 `moshu-windows-portable`，解压后双击 `墨枢.exe` 直接运行。需要系统有 WebView2 运行库（Windows 10/11 一般自带）。
+- **安装版**：`moshu_x.y.z_x64-setup.exe`，双击安装。
+- **免安装版**：`moshu_x.y.z_x64-portable.zip`，解压后双击 `墨枢.exe` 直接运行。
+
+需要 Windows 10/11（自带 WebView2 运行库）。
 
 第一次打开后到「设置」里填 DeepSeek API 密钥，点「测试连接并获取模型」。密钥存在 Windows 凭据管理器里，不进数据库。
 
 数据在 `%APPDATA%\app.moshu.writer\` 下，数据库是 `moshu.db`，备份在 `backups` 文件夹：每天结账、关窗、写作时每 2 小时各备份一次，最近 24 份全留，另外 14 天里每天留一份。「设置 → 备份与恢复」可以整库恢复、从某份备份里取回单章，也可以设一个第二备份目录（例如网盘同步文件夹）。不要把 `moshu.db` 本身放进网盘同步，换电脑请用作品包。
 
+## 更新到新版本
+
+1. 到「设置 → 版本」点「检查更新」，有新版会给出下载页；也可以直接打开 [Releases](https://github.com/xiaomo1231/Outline-Management/releases/latest)。
+2. 关掉正在运行的墨枢。保险起见，可以先到「设置 → 备份与恢复」点「立即备份」。
+3. **安装版**：运行新的 `setup.exe`，覆盖安装到原来的位置。**免安装版**：用新的 `墨枢.exe` 替换旧的。
+4. 打开墨枢，到「设置 → 版本」确认版本号已经变了。
+
+作品数据在 `%APPDATA%\app.moshu.writer\`，安装版和免安装版共用，更新不会动它。新版第一次打开时会自动升级数据库，不用做任何事。墨枢不会自己联网检查更新，只有点「检查更新」时才访问 GitHub。
+
 ## 开发
 
 需要 Node 20+ 和 Rust（stable）。
+
+发布新版本：在 GitHub 的 **Actions → 构建 Windows 安装包 → Run workflow** 里填版本号（例如 `v0.3.0`）和可选的更新说明，或者直接推一个 `v0.3.0` 标签。构建会把版本号写进程序，并把安装版和免安装版发到 Releases，发布页自动附上这一版合并的 PR。
 
 ```bash
 npm install

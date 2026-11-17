@@ -7,6 +7,7 @@ import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
 import { AsyncButton, Empty } from "../components/ui";
 import { BackupPanel, ExportPanel, TrashPanel } from "./DataPanels";
+import { APP_VERSION, checkUpdate, openReleasePage, RELEASES_URL, type UpdateInfo } from "../lib/update";
 
 export default function Settings() {
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
@@ -162,9 +163,57 @@ export default function Settings() {
         <h3>数据</h3>
         <p className="legend">{dir ? `所有数据存在：${dir}（数据库 moshu.db，备份在 backups 文件夹）` : "浏览器调试版的数据存在这个浏览器里。"}</p>
       </div>
+      <VersionPanel />
       <ExportPanel />
       <BackupPanel />
       <TrashPanel />
     </section>
+  );
+}
+
+function VersionPanel() {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [err, setErr] = useState("");
+  return (
+    <div className="panel">
+      <h3>版本</h3>
+      <p className="plan-sum">
+        <span>
+          当前版本 <b>v{APP_VERSION}</b>
+        </span>
+        {info && (
+          <span>
+            最新版本 <b>{info.latest}</b>
+            {info.publishedAt && `（${new Date(info.publishedAt).toLocaleDateString()} 发布）`}
+          </span>
+        )}
+      </p>
+      <div className="addrow">
+        <AsyncButton
+          onClick={async () => {
+            setErr("");
+            try {
+              setInfo(await checkUpdate());
+            } catch (e: any) {
+              setInfo(null);
+              setErr("检查失败：" + (e?.message || e));
+            }
+          }}
+        >
+          检查更新
+        </AsyncButton>
+        {info?.newer && (
+          <AsyncButton primary onClick={() => openReleasePage(info.url)}>
+            打开 {info.latest} 的下载页
+          </AsyncButton>
+        )}
+      </div>
+      {info && !info.newer && <p className="legend">已经是最新版本。</p>}
+      {info?.newer && info.notes && <pre className="legend" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{info.notes}</pre>}
+      {err && <p className="lint bad">{err}</p>}
+      <p className="legend">
+        只有点「检查更新」时才会访问 GitHub，墨枢不会自己联网检查。更新方法：先关掉墨枢，安装版直接运行新的 setup.exe 覆盖安装；免安装版用新的「墨枢.exe」替换旧的。作品数据在 %APPDATA%\app.moshu.writer\，更新不会动它，新版第一次打开会自动升级数据库。发布页：{RELEASES_URL}
+      </p>
+    </div>
   );
 }

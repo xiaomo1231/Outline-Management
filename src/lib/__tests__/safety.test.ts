@@ -136,3 +136,14 @@ describe("禁用清单", () => {
     expect(scan("他嘴角勾起，嘴角勾起。", ["嘴角勾起"]).find((r) => r.label === "禁用：嘴角勾起")?.n).toBe(2);
   });
 });
+
+import { compareVersions } from "../update";
+describe("版本号", () => {
+  it("比较新旧", () => {
+    expect(compareVersions("v0.2.0", "0.1.0")).toBeGreaterThan(0);
+    expect(compareVersions("v0.10.0", "0.9.9")).toBeGreaterThan(0);
+    expect(compareVersions("0.2.0", "v0.2.0")).toBe(0);
+    expect(compareVersions("v0.2", "0.2.1")).toBeLessThan(0);
+    expect(compareVersions("v1.0.0-beta", "1.0.0")).toBe(0);
+  });
+});

@@ -47,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![secret_get, secret_set])
         .run(tauri::generate_context!())
         .expect("墨枢启动失败");

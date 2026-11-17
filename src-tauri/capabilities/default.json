@@ -74,6 +74,9 @@
         },
         {
           "url": "https://*.deepseek.com/*"
+        },
+        {
+          "url": "https://api.github.com/repos/xiaomo1231/Outline-Management/releases/*"
         }
       ]
     },
@@ -98,6 +101,14 @@
       "allow": [
         {
           "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://github.com/xiaomo1231/Outline-Management/*"
         }
       ]
     }
