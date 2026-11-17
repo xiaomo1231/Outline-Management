@@ -85,6 +85,8 @@ jobs:
           New-Item -ItemType Directory -Force release | Out-Null
           Copy-Item (Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1).FullName "release/moshu_${v}_x64-setup.exe"
           Compress-Archive -Path portable/* -DestinationPath "release/moshu_${v}_x64-portable.zip"
+          # 免安装版自动更新时直接下载这个 exe
+          Copy-Item src-tauri/target/release/moshu.exe "release/moshu_${v}_x64-portable.exe"
 
       - name: 发布到 Releases
         if: env.TAG != ''
@@ -101,11 +103,13 @@ jobs:
             ## 下载
 
             - **安装版**：`moshu_*_x64-setup.exe`，双击安装。
-            - **免安装版**：`moshu_*_x64-portable.zip`，解压后双击「墨枢.exe」运行。
+            - **免安装版**：`moshu_*_x64-portable.zip`，解压后双击「墨枢.exe」运行。（`moshu_*_x64-portable.exe` 是给自动更新用的，不用手动下载）
 
             需要 Windows 10/11（自带 WebView2 运行库）。第一次打开后到「设置」里填 DeepSeek API 密钥。
 
             ## 从旧版本更新
+
+            v0.2.2 起：到「设置 → 版本」点「检查更新」，墨枢会自己下载新版，下好后点「安装并重启」即可。更早的版本按下面手动更新：
 
             1. 关掉正在运行的墨枢。（可以先到「设置 → 备份与恢复」点「立即备份」）
             2. 安装版：直接运行新的 setup.exe，覆盖安装到原来的位置。免安装版：用新的「墨枢.exe」替换旧的。

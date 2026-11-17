@@ -7,7 +7,9 @@ import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
 import { AsyncButton, Empty } from "../components/ui";
 import { BackupPanel, ExportPanel, TrashPanel } from "./DataPanels";
-import { APP_VERSION, checkUpdate, openReleasePage, RELEASES_URL, type UpdateInfo } from "../lib/update";
+import { APP_VERSION, checkUpdate, downloadUpdate, installUpdate, openReleasePage, pickAsset, RELEASES_URL, updateKind, type UpdateInfo } from "../lib/update";
+import { backup } from "../lib/backup";
+import { useStore } from "../lib/store";
 
 export default function Settings() {
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
@@ -174,6 +176,27 @@ export default function Settings() {
 function VersionPanel() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [err, setErr] = useState("");
+  const [dl, setDl] = useState<{ got: number; total: number } | null>(null);
+  const [ready, setReady] = useState<string | null>(null);
+
+  async function fetchNew(i: UpdateInfo) {
+    if (!isTauri) return;
+    const a = pickAsset(i.assets, await updateKind());
+    if (!a) {
+      setErr("这个版本的发布页没有可自动更新的文件，请打开下载页手动下载。");
+      return;
+    }
+    setDl({ got: 0, total: a.size });
+    try {
+      setReady(await downloadUpdate(a, (got, total) => setDl({ got, total: total || a.size })));
+    } catch (e: any) {
+      setErr("自动下载失败：" + (e?.message || e) + "。可以打开下载页手动下载。");
+    } finally {
+      setDl(null);
+    }
+  }
+
+  const mb = (n: number) => (n / 1048576).toFixed(1) + " MB";
   return (
     <div className="panel">
       <h3>版本</h3>
@@ -190,10 +213,14 @@ function VersionPanel() {
       </p>
       <div className="addrow">
         <AsyncButton
+          disabled={!!dl}
           onClick={async () => {
             setErr("");
+            setReady(null);
             try {
-              setInfo(await checkUpdate());
+              const i = await checkUpdate();
+              setInfo(i);
+              if (i.newer) await fetchNew(i);
             } catch (e: any) {
               setInfo(null);
               setErr("检查失败：" + (e?.message || e));
@@ -202,17 +229,44 @@ function VersionPanel() {
         >
           检查更新
         </AsyncButton>
-        {info?.newer && (
-          <AsyncButton primary onClick={() => openReleasePage(info.url)}>
-            打开 {info.latest} 的下载页
+        {ready && (
+          <AsyncButton
+            primary
+            onClick={async () => {
+              if (!confirm("墨枢会先保存正文、备份一份数据库，然后关闭并安装新版，装好后自动重新打开。现在安装吗？")) return;
+              try {
+                await installUpdate(ready, async () => {
+                  await useStore.getState().flushSaves();
+                  const r = await backup({ prune: false });
+                  if (r.startsWith("备份失败")) throw new Error("安装前的备份没成功，先不安装：" + r);
+                });
+              } catch (e: any) {
+                setErr(String(e?.message || e));
+              }
+            }}
+          >
+            安装 {info?.latest} 并重启
           </AsyncButton>
         )}
+        {info?.newer && !ready && (
+          <AsyncButton onClick={() => openReleasePage(info.url)}>打开 {info.latest} 的下载页</AsyncButton>
+        )}
       </div>
+      {dl && (
+        <p className="legend">
+          正在下载 {info?.latest}：{mb(dl.got)}
+          {dl.total ? ` / ${mb(dl.total)}` : ""}
+          <span className="meter" style={{ display: "block", marginTop: 6 }}>
+            <span style={{ display: "block", height: "100%", background: "var(--accent)", width: dl.total ? Math.min(100, (dl.got / dl.total) * 100) + "%" : "0" }} />
+          </span>
+        </p>
+      )}
+      {ready && <p className="legend">新版已经下载好并通过校验。点「安装并重启」就行，作品数据不受影响。</p>}
       {info && !info.newer && <p className="legend">已经是最新版本。</p>}
       {info?.newer && info.notes && <pre className="legend" style={{ whiteSpace: "pre-wrap", maxHeight: 220, overflow: "auto" }}>{info.notes}</pre>}
       {err && <p className="lint bad">{err}</p>}
       <p className="legend">
-        只有点「检查更新」时才会访问 GitHub，墨枢不会自己联网检查。更新方法：先关掉墨枢，安装版直接运行新的 setup.exe 覆盖安装；免安装版用新的「墨枢.exe」替换旧的。作品数据在 %APPDATA%\app.moshu.writer\，更新不会动它，新版第一次打开会自动升级数据库。发布页：{RELEASES_URL}
+        只有点「检查更新」时才会访问 GitHub，墨枢不会自己联网检查。发现新版会自动下载并核对校验值，下好后点「安装并重启」：安装版会运行新的安装程序，免安装版会直接替换「墨枢.exe」。安装前会先保存正文、备份数据库。作品数据在 %APPDATA%\app.moshu.writer\，更新不会动它，新版第一次打开会自动升级数据库。发布页：{RELEASES_URL}
       </p>
     </div>
   );
