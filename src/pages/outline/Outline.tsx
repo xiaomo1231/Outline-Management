@@ -33,7 +33,7 @@ const GUIDES: Record<Tab, { title: string; steps: ReactNode[]; tip?: ReactNode }
     title: "大纲怎么写",
     steps: [
       "先点卷名旁的「卷大纲」，用几句话写这一卷（或接下来几章）的完整走向。",
-      "写好后点「AI 拆成逐章大纲」，AI 会按你定的章数拆出每章的章名、本章大纲和场景，场景自动加进时间线。也可以在同一页里自己逐章写。",
+      "写好后点「AI 拆成逐章大纲」，先看预览、勾选要用的章，再写进大纲，场景自动加进时间线。也可以在同一页里自己逐章写，或点「一次加多章」一行一章地贴进来。",
       "点左边任一章，在右边改「本章大纲」、加场景；拖动 ⋮⋮ 调整顺序。",
       "写正文时 AI 会照着卷大纲、本章大纲和场景来写，所以大纲写得越清楚，AI 越不跑偏。",
     ],
@@ -43,7 +43,7 @@ const GUIDES: Record<Tab, { title: string; steps: ReactNode[]; tip?: ReactNode }
     title: "时间线怎么用",
     steps: [
       "时间线按故事里的时间（第几天、几点）排列所有事件，用来检查先后顺序和伏笔。",
-      "大纲里 AI 拆出来的场景会自动出现在这里；自己写的场景，在场景卡里点「加入时间线」，或用上面的「同步」一次性导入。",
+      "大纲里 AI 拆出来的场景会自动出现在这里；自己写的场景，在场景卡里点「加入时间线」，或用上面的「同步」一次性导入。还没拆场景的章，同步时会按整章记一条。没填故事时间的，按章节顺序推断天数，推断的默认不勾，确认后再勾。",
       "已经关联的场景和事件会自动保持一致：改了场景的时间、地点、结果，这里跟着变，反过来也一样。",
       "伏笔的「埋」和「收」也是事件，方便看哪些还没收。",
     ],
@@ -60,7 +60,7 @@ const GUIDES: Record<Tab, { title: string; steps: ReactNode[]; tip?: ReactNode }
 };
 
 export default function Outline() {
-  const [tab, setTab] = useState<Tab>("chars");
+  const [tab, setTab] = useState<Tab>("tree");
   const [cmode, setCmode] = useState<"simple" | "detail">("simple");
   const [omode, setOmode] = useState<"simple" | "detail">("simple");
   const [emode, setEmode] = useState<"simple" | "detail">("simple");
@@ -78,8 +78,8 @@ export default function Outline() {
         <div className="seg" role="group" aria-label="大纲页分区">
           {(
             [
-              ["chars", "人物"],
               ["tree", "大纲"],
+              ["chars", "人物"],
               ["events", "时间线"],
               ["plan", "篇幅规划"],
             ] as [Tab, string][]

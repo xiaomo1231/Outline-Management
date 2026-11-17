@@ -66,7 +66,7 @@ export default function Write() {
   const [focus, setFocus] = useState(false);
   const [scanOn, setScanOn] = useState(false);
   /** 选中文字后右键弹出的 AI 菜单 */
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; sel: boolean } | null>(null);
   const [words, setWords] = useState<Record<string, number>>({});
   const [todayWords, setTodayWords] = useState(0);
   const [todayExtra, setTodayExtra] = useState({ pasted: 0, ai: 0 });
@@ -266,10 +266,15 @@ export default function Write() {
 
   async function selOp(op: string, note = "", range?: { from: number; to: number }) {
     if (!editor || !cur) return;
-    const { from, to } = range ?? editor.state.selection;
+    let { from, to } = range ?? editor.state.selection;
+    // 续写不用先选中：取光标所在的这一段（光标在空行就取上一段）
+    if (!range && from === to && op === "续写") {
+      const p = continueRange(editor.state.doc, from);
+      if (p) ({ from, to } = p);
+    }
     const sel = editor.state.doc.textBetween(from, to, "\n");
     if (!sel.trim()) {
-      toast("先在正文里选中一段");
+      toast(op === "续写" ? "正文还是空的，先写几句" : "先在正文里选中一段");
       return;
     }
     abort.current?.abort();
@@ -537,10 +542,10 @@ export default function Write() {
               id="editor"
               style={{ fontFamily: prefs.font, fontSize: prefs.size, lineHeight: prefs.lineHeight, ["--indent" as any]: prefs.indent ? "2em" : "0" }}
               onContextMenu={(e) => {
-                // 选中了文字才弹 AI 菜单；按住 Shift 右键还是系统菜单
-                if (e.shiftKey || !editor || editor.state.selection.empty) return;
+                // 按住 Shift 右键还是系统菜单
+                if (e.shiftKey || !editor) return;
                 e.preventDefault();
-                setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 300) });
+                setMenu({ x: Math.min(e.clientX, window.innerWidth - 260), y: Math.min(e.clientY, window.innerHeight - 380), sel: !editor.state.selection.empty });
               }}
             >
               <EditorContent editor={editor} />
@@ -552,6 +557,10 @@ export default function Write() {
                 run={(op, note) => {
                   setMenu(null);
                   selOp(op, note);
+                }}
+                next={() => {
+                  setMenu(null);
+                  suggest();
                 }}
                 copy={async (cut) => {
                   setMenu(null);
@@ -830,7 +839,19 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
   );
 }
 
-function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close: () => void; run: (op: string, note: string) => void; copy: (cut: boolean) => void }) {
+/** 续写时没选中文字：取光标所在段落到光标处；光标在空段落就取上一段 */
+function continueRange(doc: import("@tiptap/pm/model").Node, pos: number): { from: number; to: number } | null {
+  const $p = doc.resolve(pos);
+  if ($p.depth >= 1 && $p.parent.textContent.trim()) return { from: $p.start(), to: pos };
+  let found: { from: number; to: number } | null = null;
+  doc.nodesBetween(0, Math.max(0, $p.before($p.depth || 1)), (n, at) => {
+    if (n.isTextblock && n.textContent.trim()) found = { from: at + 1, to: at + 1 + n.content.size };
+    return !n.isTextblock;
+  });
+  return found;
+}
+
+function SelMenu({ at, close, run, copy, next }: { at: { x: number; y: number; sel: boolean }; close: () => void; run: (op: string, note: string) => void; copy: (cut: boolean) => void; next: () => void }) {
   const [note, setNote] = useState("");
   useEffect(() => {
     const off = () => close();
@@ -845,7 +866,7 @@ function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close
     <>
       <div className="ctx-mask" onMouseDown={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
       <div className="ctx-menu" role="menu" aria-label="AI 处理选中的文字" style={{ left: at.x, top: at.y }}>
-        <div className="ctx-h">AI 处理选中的文字</div>
+        <div className="ctx-h">{at.sel ? "AI 处理选中的文字" : "AI 接着写"}</div>
         <input
           className="ctx-note"
           value={note}
@@ -858,19 +879,30 @@ function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close
             if (e.key === "Escape") close();
           }}
         />
-        {Object.keys(T.SEL_OPS).map((k) => (
-          <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note)}>
-            {k}
+        {Object.keys(T.SEL_OPS)
+          .filter((k) => at.sel || k === "续写")
+          .map((k) => (
+            <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note)}>
+              {k}
+            </button>
+          ))}
+        {!at.sel && (
+          <button type="button" role="menuitem" onClick={next}>
+            接下来怎么写 <kbd>Ctrl+Enter</kbd>
           </button>
-        ))}
-        <hr />
-        <button type="button" role="menuitem" onClick={() => copy(false)}>
-          复制 <kbd>Ctrl+C</kbd>
-        </button>
-        <button type="button" role="menuitem" onClick={() => copy(true)}>
-          剪切 <kbd>Ctrl+X</kbd>
-        </button>
-        <div className="ctx-f">要求不填，就按前文、大纲和人物设定来写。结果在右边面板里，确认后才写进正文。按住 Shift 右键是系统菜单。</div>
+        )}
+        {at.sel && (
+          <>
+            <hr />
+            <button type="button" role="menuitem" onClick={() => copy(false)}>
+              复制 <kbd>Ctrl+C</kbd>
+            </button>
+            <button type="button" role="menuitem" onClick={() => copy(true)}>
+              剪切 <kbd>Ctrl+X</kbd>
+            </button>
+          </>
+        )}
+        <div className="ctx-f">{at.sel ? "" : "没选中文字时，续写会接着光标所在的这一段写。选中一段可以扩写、改写、润色。"}要求不填，就按前文、大纲和人物设定来写。结果在右边面板里，确认后才写进正文。按住 Shift 右键是系统菜单。</div>
       </div>
     </>
   );

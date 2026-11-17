@@ -5,7 +5,7 @@ import * as mem from "../lib/memory";
 import { chat, errText, type Msg, type ToolDef } from "../lib/ai/client";
 import { stablePrefix, type Ctx } from "../lib/ai/context";
 import { describe } from "../lib/chars";
-import { allChapters, findChapter, newScene, plants } from "../lib/outline";
+import { allChapters, findChapter, firstLine, guessDay, newChapter, newScene, plants, splitChapterOutline } from "../lib/outline";
 import { phaseName } from "../lib/plan";
 import { clip, uid } from "../lib/util";
 import type { Chat, ChatMsg } from "../lib/types";
@@ -244,14 +244,24 @@ export default function Assistant() {
   async function remember(kind: "decision" | "rejected" | "inspire", content: string) {
     const r = findChapter(useStore.getState().vols, chapterId);
     await mem.addItem(work.id, kind, clip(content, 400), r?.no ?? 0, "AI 助手对话", kind === "rejected" ? 3 : 1);
-    toast(kind === "decision" ? "已作为“决定”记进记忆" : kind === "rejected" ? "已记下，以后不再推荐这个方向" : "已放进灵感箱");
+    toast(kind === "decision" ? "已作为“决定”记进记忆" : kind === "rejected" ? "已记下，以后不再推荐这个方向" : "已记进「记忆 → 近期」，写作时 AI 会参考");
   }
 
   function toScene(content: string) {
     const s = useStore.getState();
     const r = findChapter(s.vols, chapterId) ?? allChapters(s.vols).slice(-1)[0];
     if (!r) return toast("还没有章节");
-    const title = clip(content.split("\n").find((l) => l.trim())?.replace(/^[\d.、#*\-\s]+/, "") ?? "新场景", 18);
+    // 回答里是多章大纲（第1章…第2章…），就按章拆开，加到当前卷末尾
+    const many = splitChapterOutline(content);
+    if (many.length >= 2) {
+      const vol = s.vols[r.v];
+      if (!confirm(`识别出 ${many.length} 章大纲：\n${many.map((x) => "· " + x.t).join("\n")}\n\n加到「${vol.title}」末尾，作为新章（章名和本章大纲）？`)) return;
+      s.aiEdit(`AI 助手：存为 ${many.length} 章大纲`, ["vols"], (d) => {
+        for (const x of many) d.vols[r.v].chapters.push({ ...newChapter(x.t), ol: x.ol });
+      });
+      return toast(`已加 ${many.length} 章，到「大纲」页查看`);
+    }
+    const title = clip(firstLine(content), 18) || "新场景";
     if (!confirm(`在第${r.no}章末尾新建场景「${title}」，把这段回答放进“目标”？`)) return;
     s.aiEdit(`AI 助手：存为场景「${title}」`, ["vols"], (d) => void d.vols[r.v].chapters[r.c].scenes.push({ ...newScene(title), goal: clip(content, 300), ai: true, from: "AI 助手" }));
     toast(`已存进第${r.no}章`);
@@ -260,10 +270,11 @@ export default function Assistant() {
   function toEvent(content: string) {
     const s = useStore.getState();
     const r = findChapter(s.vols, chapterId);
-    const title = clip(content.split("\n").find((l) => l.trim())?.replace(/^[\d.、#*\-\s]+/, "") ?? "新事件", 24);
+    const title = clip(firstLine(content), 24) || "新事件";
+    const day = r ? guessDay(s.vols, r) : 1;
     if (!confirm(`在时间线上新建事件「${title}」？`)) return;
-    s.aiEdit(`AI 助手：加入时间线「${title}」`, ["events"], (d) => void d.events.push({ id: uid("e"), day: 1, ch: r?.ch.id ?? null, t: title, who: "", ty: "main", note: clip(content, 400), from: "AI 助手" }));
-    toast("已加入时间线，记得改故事时间");
+    s.aiEdit(`AI 助手：加入时间线「${title}」`, ["events"], (d) => void d.events.push({ id: uid("e"), day, ch: r?.ch.id ?? null, t: title, who: "", ty: "main", note: clip(content, 400), from: "AI 助手" }));
+    toast(`已加入时间线（暂定第 ${day} 天，可以在时间线里改）`);
   }
 
   if (!open)
@@ -337,7 +348,7 @@ export default function Assistant() {
                   否掉这个方向
                 </button>
                 <button type="button" onClick={() => remember("inspire", m.content)}>
-                  记到灵感箱
+                  记进记忆
                 </button>
                 <button type="button" onClick={() => toScene(m.content)}>
                   存为场景
