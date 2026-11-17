@@ -355,12 +355,18 @@ export const SEL_OPS: Record<string, string> = {
   改对白口吻: "只改对白，让每个人说话更符合他的人设和说话方式，叙述部分不动。",
 };
 
-export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal): Promise<string> {
+/** 作者给这次续写、扩写等的额外要求；不填就按上下文和大纲来 */
+export function noteLine(note?: string): string {
+  const n = (note ?? "").trim();
+  return n ? `作者对这一次的要求（风格、走向等），优先照着做：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
+}
+
+export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string): Promise<string> {
   const ctx = r ? await chapterContext(c, r) : { text: "" };
   const res = await chat(
     [
       sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。")) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-      user(`${ctx.text}\n\n前文：\n${before.slice(-1200)}\n\n要处理的段落：\n${sel}\n\n任务：${SEL_OPS[op] ?? op}`),
+      user(`${ctx.text}\n\n前文：\n${before.slice(-1200)}\n\n要处理的段落：\n${sel}\n\n任务：${SEL_OPS[op] ?? op}\n${noteLine(note)}`),
     ],
     { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : 1.0 },
   );

@@ -510,3 +510,4 @@ label.check span{display:flex;gap:6px;align-items:center;color:var(--ink)}
 .guide-open{all:unset;cursor:pointer;font-size:12px;color:var(--accent);margin:0 0 8px;display:inline-block}
 .guide-open:hover{text-decoration:underline}
 .ch-ol{margin:0 0 8px;font-size:13px;line-height:1.7;white-space:pre-wrap}
+.ctx-note{margin:2px 6px 4px;padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)}

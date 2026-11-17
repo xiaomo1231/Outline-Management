@@ -47,7 +47,7 @@ function aiParas(text: string) {
 type Panel =
   | { kind: "none" }
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
-  | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string }
+  | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string; note: string }
   | { kind: "fill"; scene: string; text: string; done: boolean; err?: string }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null };
@@ -264,9 +264,9 @@ export default function Write() {
     toast("已插入。浅黄底是 AI 写的，你改过以后会变成虚线");
   }
 
-  async function selOp(op: string) {
+  async function selOp(op: string, note = "", range?: { from: number; to: number }) {
     if (!editor || !cur) return;
-    const { from, to } = editor.state.selection;
+    const { from, to } = range ?? editor.state.selection;
     const sel = editor.state.doc.textBetween(from, to, "\n");
     if (!sel.trim()) {
       toast("先在正文里选中一段");
@@ -274,9 +274,9 @@ export default function Write() {
     }
     abort.current?.abort();
     abort.current = new AbortController();
-    setPanel({ kind: "sel", op, from, to, text: "", done: false });
+    setPanel({ kind: "sel", op, from, to, text: "", done: false, note });
     try {
-      await T.selectionOp(ctx(), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal);
+      await T.selectionOp(ctx(), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note);
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true, err: errText(e) } : p));
@@ -426,7 +426,7 @@ export default function Write() {
               steps={[
                 "直接在纸上写，自动保存。左边是目录，右边是本章大纲、出场人物和 AI 面板。",
                 "卡住了按 Ctrl+Enter（或点「接下来怎么写」），AI 给三个接下来的写法，选一个插进去。",
-                "选中一段文字后点右键，可以让 AI 续写、扩写、改写、润色或改对白口吻；结果先出现在右边，确认后才写进正文。",
+                "选中一段文字后点右键，可以让 AI 续写、扩写、改写、润色或改对白口吻。菜单顶上可以写一句要求（比如节奏放慢、多写心理），不写就按前文和大纲来。结果先出现在右边，确认后才写进正文。",
                 "本章已经有场景大纲时，可以点「按大纲生成草稿」先铺一版，再自己改。",
                 "浅黄底是 AI 写的字；每章都有「历史」，误删了能找回。",
               ]}
@@ -549,9 +549,9 @@ export default function Write() {
               <SelMenu
                 at={menu}
                 close={() => setMenu(null)}
-                run={(op) => {
+                run={(op, note) => {
                   setMenu(null);
-                  selOp(op);
+                  selOp(op, note);
                 }}
                 copy={async (cut) => {
                   setMenu(null);
@@ -605,7 +605,7 @@ export default function Write() {
               restore={restoreVersion}
             />
           ) : (
-            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} />
+            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} redoSel={(note) => panel.kind === "sel" && selOp(panel.op, note, { from: panel.from, to: panel.to })} />
           )}
 
           <div className="panel">
@@ -693,7 +693,19 @@ export default function Write() {
   );
 }
 
-function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void }) {
+function RedoNote({ note, redo }: { note: string; redo: (n: string) => void }) {
+  const [v, setV] = useState(note);
+  return (
+    <div className="addrow" style={{ marginTop: 6 }}>
+      <input value={v} placeholder="不满意？写个要求再来一次（可选）" aria-label="重新生成的要求" onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && redo(v)} />
+      <button className="btn" type="button" onClick={() => redo(v)}>
+        重新生成
+      </button>
+    </div>
+  );
+}
+
+function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop, redoSel }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void; redoSel: (note: string) => void }) {
   if (panel.kind === "none" || panel.kind === "hist") return null;
   const close = (
     <button className="x" type="button" aria-label="关闭" onClick={() => setPanel({ kind: "none" })}>
@@ -726,6 +738,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         </h3>
         <div className="ai-text">{panel.text || (panel.done ? "" : "正在写……")}</div>
         {panel.err && <p className="lint bad">{panel.err}</p>}
+        {panel.done && <RedoNote note={panel.note} redo={(n) => redoSel(n)} />}
         <div className="addrow">
           {!panel.done && (
             <button className="btn" type="button" onClick={stop}>
@@ -817,7 +830,8 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
   );
 }
 
-function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close: () => void; run: (op: string) => void; copy: (cut: boolean) => void }) {
+function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close: () => void; run: (op: string, note: string) => void; copy: (cut: boolean) => void }) {
+  const [note, setNote] = useState("");
   useEffect(() => {
     const off = () => close();
     window.addEventListener("scroll", off, true);
@@ -832,8 +846,20 @@ function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close
       <div className="ctx-mask" onMouseDown={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
       <div className="ctx-menu" role="menu" aria-label="AI 处理选中的文字" style={{ left: at.x, top: at.y }}>
         <div className="ctx-h">AI 处理选中的文字</div>
+        <input
+          className="ctx-note"
+          value={note}
+          autoFocus
+          placeholder="要求（可选）：如 节奏放慢、多写心理、转向冲突"
+          aria-label="这一次的要求，可以不填"
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Escape") close();
+          }}
+        />
         {Object.keys(T.SEL_OPS).map((k) => (
-          <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k)}>
+          <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note)}>
             {k}
           </button>
         ))}
@@ -844,7 +870,7 @@ function SelMenu({ at, close, run, copy }: { at: { x: number; y: number }; close
         <button type="button" role="menuitem" onClick={() => copy(true)}>
           剪切 <kbd>Ctrl+X</kbd>
         </button>
-        <div className="ctx-f">结果在右边面板里，确认后才写进正文。按住 Shift 右键是系统菜单。</div>
+        <div className="ctx-f">要求不填，就按前文、大纲和人物设定来写。结果在右边面板里，确认后才写进正文。按住 Shift 右键是系统菜单。</div>
       </div>
     </>
   );
