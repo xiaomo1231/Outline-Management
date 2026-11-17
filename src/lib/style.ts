@@ -146,6 +146,12 @@ export function compileStyle(s: StyleSetup): string {
   if (s.rules.trim()) lines.push("【作者规则，最高优先级，和下面任何一条冲突时以这里为准】\n" + s.rules.trim());
   for (const [k, label] of DIMS) {
     const parts: string[] = [];
+    // 人称只能有一种：以核心为准，没有核心就用第一个写了人称的块，避免“第一人称”“第三人称”同时出现
+    if (k === "pov") {
+      const p = core?.dims.pov || [...subs, ...acc].find((x) => x.dims.pov)?.dims.pov;
+      if (p) lines.push(`${label}：${p}`);
+      continue;
+    }
     if (core?.dims[k]) parts.push(core.dims[k]);
     for (const x of subs) if (x.dims[k]) parts.push(`兼有${x.name}的一面：${x.dims[k]}`);
     for (const x of acc) if (x.dims[k]) parts.push(`少量点缀（${x.desc || "全篇"}）：${x.dims[k]}`);

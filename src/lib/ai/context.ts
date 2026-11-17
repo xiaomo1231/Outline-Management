@@ -19,7 +19,7 @@ export const NATURAL = `写法要求：
 - 句子长短要有变化，允许不完整的句子和口语。
 - 不要替作者推进大纲以外的剧情，不要新增设定。`;
 
-/** 常驻页：有模型班整理过的就用它，没有就现场拼一份 */
+/** 核心摘要：有AI 整理整理过的就用它，没有就现场拼一份 */
 export async function resident(c: Ctx): Promise<string> {
   const r = await mem.getResident(c.work.id);
   if (r) return r.text;
@@ -29,7 +29,7 @@ export async function resident(c: Ctx): Promise<string> {
 
 /** 系统提示的稳定前缀 */
 export async function stablePrefix(c: Ctx, role: string): Promise<string> {
-  return `${role}\n\n=== 常驻页（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
+  return `${role}\n\n=== 核心摘要（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
 }
 
 /** 作者的禁用清单，所有任务都带上 */

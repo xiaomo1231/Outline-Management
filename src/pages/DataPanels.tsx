@@ -10,7 +10,7 @@ import { buildDocx, type DocBlock } from "../lib/docx";
 import { exportPack, importPack, isPack, workExists } from "../lib/pack";
 import { parseBook, plainOf, textToHtml } from "../lib/importTxt";
 import { decode } from "../lib/corpus";
-import { countWords, uid } from "../lib/util";
+import { countWords, fmtTime, uid } from "../lib/util";
 import { AsyncButton, Empty } from "../components/ui";
 import type { TrashItem, Volume, Work } from "../lib/types";
 
@@ -194,7 +194,7 @@ export async function importPackFile(): Promise<string | null> {
     return null;
   }
   const ex = await workExists(p.work.id);
-  if (ex && !confirm(`这台电脑上已经有《${p.work.name}》${ex.deleted ? "（在回收站里）" : ""}。用作品包（导出于 ${new Date(p.exportedAt).toLocaleString()}）整本覆盖它吗？覆盖前会先备份数据库。`)) return null;
+  if (ex && !confirm(`这台电脑上已经有《${p.work.name}》${ex.deleted ? "（在回收站里）" : ""}。用作品包（导出于 ${fmtTime(p.exportedAt)}）整本覆盖它吗？覆盖前会先备份数据库。`)) return null;
   if (ex) {
     const r = await bk.backup();
     if (r.startsWith("备份失败")) {
@@ -236,7 +236,7 @@ export function BackupPanel() {
   return (
     <div className="panel">
       <h3>备份与恢复</h3>
-      <p className="legend">每天结账、关窗、写作时每 2 小时各备份一次。最近 24 份全留，另外 14 天里每天留一份。</p>
+      <p className="legend">每日整理、关窗、写作时每 2 小时各备份一次。最近 24 份全留，另外 14 天里每天留一份。</p>
       <div className="addrow">
         <AsyncButton
           onClick={async () => {
@@ -285,7 +285,7 @@ export function BackupPanel() {
           <tbody>
             {list.map((b) => (
               <tr key={b.name}>
-                <td className="num">{new Date(b.at).toLocaleString()}</td>
+                <td className="num">{fmtTime(b.at)}</td>
                 <td className="num">{b.size != null ? (b.size / 1048576).toFixed(1) + " MB" : ""}</td>
                 <td>
                   {work && (
@@ -301,7 +301,7 @@ export function BackupPanel() {
                   )}{" "}
                   <AsyncButton
                     onClick={async () => {
-                      if (!confirm(`把所有作品恢复到 ${new Date(b.at).toLocaleString()} 的样子？这之后写的内容会被替换掉（恢复前会自动备份一份现在的数据，反悔可以再恢复回来）。`)) return;
+                      if (!confirm(`把所有作品恢复到 ${fmtTime(b.at)} 的样子？这之后写的内容会被替换掉（恢复前会自动备份一份现在的数据，反悔可以再恢复回来）。`)) return;
                       await useStore.getState().flushSaves();
                       try {
                         await bk.restoreAll(b.name, setStep);
@@ -366,7 +366,7 @@ export function TrashPanel() {
   return (
     <div className="panel">
       <h3>回收站</h3>
-      <p className="legend">删掉的书、章、场景在这里留 30 天，之后结账时彻底删除。</p>
+      <p className="legend">删掉的书、章、场景在这里留 30 天，之后每日整理时彻底删除。</p>
       {!works.length && !items.length && <Empty>回收站是空的。</Empty>}
       <ul className="scan-list">
         {works.map((x) => (

@@ -1,4 +1,4 @@
-// 回收站：删掉的章、场景先放这里，30 天后结账时才真删。作品的回收站在 works 表的 deleted 列。
+// 回收站：删掉的章、场景先放这里，30 天后每日整理时才真删。作品的回收站在 works 表的 deleted 列。
 import * as repo from "./repo";
 import { useStore } from "./store";
 import { uid } from "./util";

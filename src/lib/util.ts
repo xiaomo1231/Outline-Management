@@ -59,3 +59,15 @@ export function chapterNo(title: string): number {
   const m = /^第(\d+)章/.exec(title);
   return m ? +m[1] : 0;
 }
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+/** 统一 24 小时制：2026-11-17 21:05 */
+export function fmtTime(at: number | Date): string {
+  const d = new Date(at);
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+/** 只要时分：21:05 */
+export function fmtHM(at: number | Date): string {
+  const d = new Date(at);
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}

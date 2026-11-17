@@ -44,4 +44,4 @@ export interface MemPrefs {
   residentLimit: number;
   autoModel: boolean;
 }
-export const MEM_DEFAULT: MemPrefs = { dailyAt: "22:05", residentLimit: 3000, autoModel: true };
+export const MEM_DEFAULT: MemPrefs = { dailyAt: "22:05", residentLimit: 3000, autoModel: false };

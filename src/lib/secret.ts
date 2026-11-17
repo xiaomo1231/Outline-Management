@@ -26,3 +26,11 @@ export async function setSecret(name: string, value: string) {
     /* 隐私模式下拿不到存储，忽略 */
   }
 }
+
+export async function hasKey(): Promise<boolean> {
+  try {
+    return !!(await getSecret("deepseek"));
+  } catch {
+    return false;
+  }
+}

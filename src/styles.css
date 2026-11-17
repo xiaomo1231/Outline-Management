@@ -511,3 +511,14 @@ label.check span{display:flex;gap:6px;align-items:center;color:var(--ink)}
 .guide-open:hover{text-decoration:underline}
 .ch-ol{margin:0 0 8px;font-size:13px;line-height:1.7;white-space:pre-wrap}
 .ctx-note{margin:2px 6px 4px;padding:5px 8px;font-size:12px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink)}
+.wiz-bar{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg);padding:8px 0 10px;margin-bottom:8px;border-bottom:1px solid var(--line)}
+.wiz-bar .muted{flex:1;min-width:220px;font-size:13px}
+p.hint{font-size:13px;color:var(--muted);background:var(--panel2,rgba(127,127,127,.08));padding:8px 10px;border-radius:8px}
+.vol-t .fold{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;text-align:left;flex:1}
+.vol-t .fold small{font-weight:400}
+.toc-q{width:100%;margin-bottom:8px;font-size:13px}
+.panel.find input{width:100%;margin:6px 0}
+table.keys{width:100%;border-collapse:collapse;font-size:13px}
+table.keys td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+table.keys td:first-child{white-space:nowrap;width:1%}
+.panel-wrap{display:flex;flex-direction:column;gap:8px}

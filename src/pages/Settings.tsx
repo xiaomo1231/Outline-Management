@@ -124,19 +124,31 @@ export default function Settings() {
       </div>
 
       <div className="panel">
-        <h3>记忆与结账</h3>
+        <h3>记忆与每日整理</h3>
         <div className="meta-row">
           <label>
-            每天结账时间
-            <input type="time" value={memp.dailyAt} onChange={(e) => setMemp({ ...memp, dailyAt: e.target.value })} />
+            做每日整理的时间
+            <span className="row2" style={{ gap: 4 }}>
+              <select value={memp.dailyAt.split(":")[0]} aria-label="小时" onChange={(e) => setMemp({ ...memp, dailyAt: e.target.value + ":" + (memp.dailyAt.split(":")[1] || "00") })}>
+                {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")).map((h) => (
+                  <option key={h}>{h}</option>
+                ))}
+              </select>
+              :
+              <select value={memp.dailyAt.split(":")[1]} aria-label="分钟" onChange={(e) => setMemp({ ...memp, dailyAt: memp.dailyAt.split(":")[0] + ":" + e.target.value })}>
+                {Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0")).concat(memp.dailyAt.split(":")[1] && +memp.dailyAt.split(":")[1] % 5 ? [memp.dailyAt.split(":")[1]] : []).map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </span>
           </label>
           <label>
-            常驻页上限（字）
+            核心摘要上限（字）
             <input type="number" min={1000} max={8000} step={500} value={memp.residentLimit} onChange={(e) => setMemp({ ...memp, residentLimit: +e.target.value })} />
           </label>
           <label className="check">
             <span>
-              <input type="checkbox" checked={memp.autoModel} onChange={(e) => setMemp({ ...memp, autoModel: e.target.checked })} /> 结账时自动跑模型班（会花 API 费）
+              <input type="checkbox" checked={memp.autoModel} onChange={(e) => setMemp({ ...memp, autoModel: e.target.checked })} /> 每日整理时顺便跑 AI 整理（会花 API 费，默认关）
             </span>
           </label>
         </div>

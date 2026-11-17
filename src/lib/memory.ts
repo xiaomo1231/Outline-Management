@@ -1,5 +1,5 @@
-// 作品记忆系统：白天投票、夜里结账。
-// 脚本班不花 API 费，负责备份、结算票、升降层、对账；模型班调 DeepSeek，负责摘要、日记、常驻页、作品圣经。
+// 作品记忆系统：白天投票、夜里每日整理。
+// 自动整理不花 API 费，负责备份、结算票、升降层、对账；AI 整理调 DeepSeek，负责摘要、日记、核心摘要、设定集。
 import { getDb } from "./db";
 import { backup } from "./backup";
 import { purgeOld } from "./trash";
@@ -70,7 +70,7 @@ export async function pendingVotes(work: Id) {
 
 /**
  * 确定的分数，不掷骰子：最近命中 + 离当前章节的距离 + 大纲后面是否还会用到。
- * 同样的书稿每次结账结果一致。
+ * 同样的书稿每次每日整理结果一致。
  */
 export function score(it: MemItem, curNo: number, upcoming: string[], now = Date.now()): number {
   const days = it.last_hit ? (now - it.last_hit) / 86400000 : 999;
@@ -110,12 +110,12 @@ export async function currentNo(work: Id, vols: Volume[]): Promise<number> {
   return n;
 }
 
-/* ---------- 脚本班 ---------- */
+/* ---------- 自动整理 ---------- */
 
 let running = false;
 
 export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry> {
-  if (running) return { at: Date.now(), day: today(), kind: "script", ok: false, lines: ["上一次结账还没跑完，这次跳过。"] };
+  if (running) return { at: Date.now(), day: today(), kind: "script", ok: false, lines: ["上一次每日整理还没跑完，这次跳过。"] };
   running = true;
   const lines: string[] = [];
   try {
@@ -162,7 +162,7 @@ export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry
     const after = (await db.all<{ n: number }>(`SELECT COUNT(*) AS n FROM memory WHERE work_id=?`, [work.id]))[0].n;
     const ok = after === before + added;
     const counts = await layerCounts(work.id);
-    lines.push(`命中票 ${hits.reduce((a, h) => a + h.n, 0)} 张，新条目 ${news.length} 张，并入 ${added} 条，换层 ${moved} 条。`);
+    lines.push(`命中 ${hits.reduce((a, h) => a + h.n, 0)} 次，新条目 ${news.length} 条，并入 ${added} 条，换层 ${moved} 条。`);
     lines.push(`各层：${counts.map((n, i) => `${LAYER[i + 1]} ${n}`).join("、")}。对账${ok ? "一致" : `不一致（应为 ${before + added}，实为 ${after}）`}。`);
     const e: MemLogEntry = { at: now, day: today(), kind: "script", ok, lines };
     await appendLog(work.id, e);
@@ -191,7 +191,7 @@ export async function appendLog(work: Id, e: MemLogEntry) {
   await repo.saveDoc(work, "memlog", log.slice(0, 120));
 }
 
-/* ---------- 常驻页 ---------- */
+/* ---------- 核心摘要 ---------- */
 
 export interface Resident {
   text: string;
@@ -200,8 +200,8 @@ export interface Resident {
 }
 
 /**
- * 不调 AI 的常驻页：一半给人物和写作规范，一半给剧情事实。
- * 模型班会在这个基础上压短捋顺。
+ * 不调 AI 的核心摘要：一半给人物和写作规范，一半给剧情事实。
+ * AI 整理会在这个基础上压短捋顺。
  */
 export function buildResident(work: Work, chars: Character[], vols: Volume[], events: StoryEvent[], styleText: string, facts: MemItem[], limit = RESIDENT_DEFAULT): string {
   const half = Math.floor(limit / 2);
@@ -254,7 +254,7 @@ export interface Health {
   diaryToday: boolean;
   bibleDays: number | null;
   pending: { new: number; hit: number };
-  /** 今天该结账但还没结 */
+  /** 今天该每日整理但还没结 */
   overdue: boolean;
 }
 

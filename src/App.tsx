@@ -7,7 +7,7 @@ import * as bk from "./lib/backup";
 import { purgeOld } from "./lib/trash";
 import { MEM_DEFAULT, type EditorPrefs, type MemPrefs } from "./lib/hooks";
 import { loadSavedFonts } from "./lib/fonts";
-import { today } from "./lib/util";
+import { fmtTime, today } from "./lib/util";
 import Library from "./pages/Library";
 import NewWork from "./pages/NewWork";
 import Write from "./pages/Write";
@@ -137,12 +137,12 @@ function MemoryBar({ work }: { work: string }) {
     <button type="button" className={"membar" + (bad ? " bad" : "")} onClick={() => useStore.getState().go("memory")} title="记忆健康，点开看详情">
       <i />
       记忆 {h.counts.reduce((a, b) => a + b, 0)} 条
-      {h.overdue ? " · 今天还没结账" : h.lastScript ? ` · 上次结账 ${new Date(h.lastScript.at).toLocaleDateString()}` : ""}
+      {h.overdue ? " · 今天还没整理" : h.lastScript ? ` · 上次整理 ${new Date(h.lastScript.at).toLocaleDateString()}` : ""}
     </button>
   );
 }
 
-/** 写作时每 2 小时自动备份一次数据库（结账和关窗时另有备份） */
+/** 写作时每 2 小时自动备份一次数据库（每日整理和关窗时另有备份） */
 function useAutoBackup() {
   useEffect(() => {
     if (!isTauri) return;
@@ -155,7 +155,7 @@ function useAutoBackup() {
   }, []);
 }
 
-/** 每天定时结账；打开时发现漏跑就补；关窗口时跑一次脚本班 */
+/** 每天定时做每日整理；打开时发现漏跑就补；关窗口时跑一次自动整理 */
 function useScheduler(workId: string | null) {
   const running = useRef(false);
   useEffect(() => {
@@ -165,7 +165,7 @@ function useScheduler(workId: string | null) {
       running.current = true;
       try {
         const r = await runAll();
-        if (r) toast(`${why}：记忆已结账`);
+        if (r) toast(`${why}：记忆已整理`);
       } finally {
         running.current = false;
       }
@@ -173,7 +173,7 @@ function useScheduler(workId: string | null) {
     const check = async () => {
       const p = await prefs();
       const h = await mem.health(workId, p.dailyAt);
-      if (h.overdue) run(h.lastScript && h.lastScript.day < today() ? "补跑昨天漏掉的结账" : "到点了");
+      if (h.overdue) run(h.lastScript && h.lastScript.day < today() ? "补跑昨天漏掉的整理" : "到点了");
     };
     const t0 = setTimeout(check, 8000);
     const t = setInterval(check, 60_000);
@@ -223,10 +223,18 @@ function DayReport({ work }: { work: string }) {
       const p = await prefs();
       const [days, h] = await Promise.all([repo.dailyWords(work, 7), mem.health(work, p.dailyAt)]);
       const y = days.find((d) => d.day < today());
+      if (!y && !h.lastScript) {
+        setLines([
+          `欢迎！今天的目标是 ${s.work?.goal.toLocaleString()} 字，左上角会实时显示进度。`,
+          "写的内容每隔几秒自动保存，不用手动点保存。",
+          "不知道从哪开始？先去「大纲」写一句话梗概，或者直接在这里开写。",
+        ]);
+        return;
+      }
       setLines([
         y ? `上次写作 ${y.day}，写了 ${y.words.toLocaleString()} 字。今天目标 ${s.work?.goal.toLocaleString()} 字。` : `今天目标 ${s.work?.goal.toLocaleString()} 字。`,
-        `记忆：${h.counts.map((n, i) => `${mem.LAYER[i + 1]} ${n}`).join("、")}；常驻页 ${h.residentChars ? h.residentChars + " 字" : "还没生成"}。`,
-        h.lastScript ? `上次结账 ${new Date(h.lastScript.at).toLocaleString()}，${h.lastScript.ok ? "正常" : "出错了，去记忆页看看"}${h.overdue ? "；有漏跑，稍后自动补上" : ""}。` : "还没结过账，今晚会第一次结账。",
+        `记忆：${h.counts.map((n, i) => `${mem.LAYER[i + 1]} ${n}`).join("、")}；核心摘要 ${h.residentChars ? h.residentChars + " 字" : "还没生成"}。`,
+        h.lastScript ? `上次整理 ${fmtTime(h.lastScript.at)}，${h.lastScript.ok ? "正常" : "出错了，去记忆页看看"}${h.overdue ? "；有漏跑，稍后自动补上" : ""}。` : "还没整理过，今晚会第一次每日整理。",
       ]);
     })();
   }, [work]);

@@ -12,7 +12,7 @@ import type { Character, FieldMut, RevealState } from "../../lib/types";
 import { ctx } from "./ctx";
 
 export function CharActions({ mode, setMode, say }: { mode: "simple" | "detail"; setMode: (m: "simple" | "detail") => void; say: Say }) {
-  const [role, setRole] = useState(ROLES[0]);
+  const [role, setRole] = useState("配角");
   const edit = useStore((s) => s.edit);
   return (
     <div className="acts">
@@ -108,7 +108,7 @@ async function draft(i: number, scope: string, say: Say) {
       <>
         <p style={{ margin: "0 0 8px" }}>为「{c.name || c.role}」补了 {n} 项，浅黄底是 AI 写的。</p>
         <p className="empty" style={{ margin: 0 }}>
-          起草时参考了常驻页（作品简介、主要人物、文风）。不会改动你已经填的内容。你改过的项会变回普通底色。
+          起草时参考了核心摘要（作品简介、主要人物、文风）。不会改动你已经填的内容。你改过的项会变回普通底色。
         </p>
       </>,
     );
@@ -181,8 +181,8 @@ function MutToggle({ c, k }: { c: Character; k: string }) {
       aria-pressed={m === "lock"}
       title={
         m === "lock"
-          ? "锁定：AI 写正文不会改它，正文写出不一样的会报矛盾，结账时发现的变化要你点「采纳」才生效。点一下改成随剧情变化。"
-          : "随剧情变化：正文写了变化（例如毁容、换装、升级），结账时自动记进人设时间轴，之后的章节按新状态写。点一下改成锁定。"
+          ? "锁定：AI 写正文不会改它，正文写出不一样的会报矛盾，每日整理时发现的变化要你点「采纳」才生效。点一下改成随剧情变化。"
+          : "随剧情变化：正文写了变化（例如毁容、换装、升级），每日整理时自动记进人设时间轴，之后的章节按新状态写。点一下改成锁定。"
       }
       onClick={() => {
         // 改成随剧情变化时，之前被锁定拦下的变化可以一起采纳
@@ -318,7 +318,7 @@ export function DetailChars({ say }: { say: Say }) {
                 </tbody>
               </table>
             ) : (
-              <Empty>还没有变化记录。每天结账时，AI 读新写的章节，把人物的变化记在这里；标了「锁定」的字段，变化要你点「采纳」才生效。字段名旁边的标签可以点，在「锁定」和「随剧情变化」之间切换。</Empty>
+              <Empty>还没有变化记录。每日整理时，AI 读新写的章节，把人物的变化记在这里；标了「锁定」的字段，变化要你点「采纳」才生效。字段名旁边的标签可以点，在「锁定」和「随剧情变化」之间切换。</Empty>
             )}
             <div className="legend">滑块所在章的状态：{Object.entries(snap).filter(([k, v]) => v && v !== c.f[k]).map(([k, v]) => `${fieldLabel(k)}：${v}`).join("；") || "和初始卡一样"}</div>
           </div>

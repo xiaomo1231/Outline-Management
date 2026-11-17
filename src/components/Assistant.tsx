@@ -25,7 +25,7 @@ const TOOLS: ToolDef[] = [
   { type: "function", function: { name: "get_outline", description: "读第 from 到 to 章的大纲（场景、目标、冲突、伏笔）", parameters: { type: "object", properties: { from: { type: "number" }, to: { type: "number" } }, required: ["from", "to"] } } },
   { type: "function", function: { name: "get_timeline", description: "读故事内时间线（事件表）", parameters: { type: "object", properties: {} } } },
   { type: "function", function: { name: "list_plants", description: "列出所有伏笔，以及埋和收的章节", parameters: { type: "object", properties: {} } } },
-  { type: "function", function: { name: "search_memory", description: "在作品记忆和作品圣经里搜索", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
+  { type: "function", function: { name: "search_memory", description: "在作品记忆和设定集里搜索", parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } } },
 ];
 
 async function runTool(c: Ctx, name: string, args: any): Promise<[string, string]> {
@@ -73,7 +73,7 @@ async function runTool(c: Ctx, name: string, args: any): Promise<[string, string
       const items = (await mem.items(c.work.id)).filter((x) => x.text.includes(q)).slice(0, 20);
       await mem.voteHit(c.work.id, items.map((x) => x.id));
       const bible = (await mem.getBible(c.work.id)).text.split("\n").filter((l) => l.includes(q)).slice(0, 10);
-      return [[...items.map((x) => `[第${x.ch}章] ${x.text}`), ...bible.map((l) => "[作品圣经] " + l)].join("\n") || "记忆里没有", `搜索记忆：${q}`];
+      return [[...items.map((x) => `[第${x.ch}章] ${x.text}`), ...bible.map((l) => "[设定集] " + l)].join("\n") || "记忆里没有", `搜索记忆：${q}`];
     }
   }
   return ["未知工具", name];

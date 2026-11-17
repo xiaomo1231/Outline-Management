@@ -1,3 +1,5 @@
+import { Guide } from "../components/Guide";
+import { fmtTime } from "../lib/util";
 import { useEffect, useState } from "react";
 import { useStore, toast } from "../lib/store";
 import * as mem from "../lib/memory";
@@ -16,7 +18,7 @@ export async function runAll(onStep?: (s: string) => void) {
   const s = useStore.getState();
   if (!s.work) return;
   const prefs = { ...MEM_DEFAULT, ...(await repo.getSetting<Partial<MemPrefs>>("memory", {})) };
-  onStep?.("脚本班：备份、结算、升降层");
+  onStep?.("自动整理：备份、结算、升降层");
   const a = await mem.scriptRun(s.work, s.vols);
   if (!a.ok) return a;
   if (!prefs.autoModel) return a;
@@ -42,15 +44,27 @@ export default function Memory() {
           label="记忆页分区"
           style={{ margin: 0 }}
           options={[
-            ["health", "健康与结账"],
+            ["health", "健康与整理"],
             ["items", "四层记忆"],
-            ["resident", "常驻页"],
-            ["bible", "作品圣经"],
+            ["resident", "核心摘要"],
+            ["bible", "设定集"],
             ["diary", "写作日记"],
             ["changes", "AI 变更记录"],
           ]}
         />
       </div>
+      <Guide
+        id="memory"
+        title="记忆页里这些词是什么意思"
+        steps={[
+          "每日整理：每天到点（默认 22:05）自动把今天写的内容归档进记忆。分两步：",
+          "自动整理：不花钱，负责备份、统计哪些记忆被用到、调整记忆的远近层级。",
+          "AI 整理：调 DeepSeek（会花一点 API 费），给新章节写摘要、记人设变化、写写作日记。默认不自动跑，可以在设置里打开，或在这里手动点。",
+          "核心摘要：每次调用 AI 都会带上的一页“这本书的要点”，越短越准。",
+          "设定集：已经定下、以后不能推翻的设定和事实，AI 检查矛盾时会对照它。",
+        ]}
+        tip="不想管这些也没关系，不打开 AI 整理，写作和大纲照常能用。"
+      />
       {tab === "health" && <HealthTab key={ver} work={work.id} refresh={refresh} />}
       {tab === "items" && <ItemsTab work={work.id} />}
       {tab === "resident" && <ResidentTab work={work.id} />}
@@ -79,13 +93,13 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
             <li>
               各层条目：{h.counts.map((n, i) => `${mem.LAYER[i + 1]} ${n}`).join("、")}
             </li>
-            <li className={h.residentChars ? "" : "bad"}>常驻页 {h.residentChars ? `${h.residentChars} 字（上限 ${prefs.residentLimit}）` : "还没生成，AI 会现场拼一份"}</li>
-            <li className={h.lastScript?.ok === false ? "bad" : ""}>上次脚本班：{h.lastScript ? `${new Date(h.lastScript.at).toLocaleString()}，${h.lastScript.ok ? "正常" : "出错"}` : "还没跑过"}</li>
-            <li className={h.lastModel?.ok === false ? "bad" : ""}>上次模型班：{h.lastModel ? `${new Date(h.lastModel.at).toLocaleString()}，${h.lastModel.ok ? "正常" : "出错"}` : "还没跑过"}</li>
+            <li className={h.residentChars ? "" : "bad"}>核心摘要 {h.residentChars ? `${h.residentChars} 字（上限 ${prefs.residentLimit}）` : "还没生成，AI 会现场拼一份"}</li>
+            <li className={h.lastScript?.ok === false ? "bad" : ""}>上次自动整理：{h.lastScript ? `${fmtTime(h.lastScript.at)}，${h.lastScript.ok ? "正常" : "出错"}` : "还没跑过"}</li>
+            <li className={h.lastModel?.ok === false ? "bad" : ""}>上次 AI 整理：{h.lastModel ? `${fmtTime(h.lastModel.at)}，${h.lastModel.ok ? "正常" : "出错"}` : "还没跑过"}</li>
             <li className={h.diaryToday ? "" : "bad"}>今日写作日记：{h.diaryToday ? "已生成" : "还没生成"}</li>
-            <li className={h.bibleDays != null && h.bibleDays > 7 ? "bad" : ""}>作品圣经：{h.bibleDays == null ? "还是空的" : `${h.bibleDays} 天前更新`}</li>
+            <li className={h.bibleDays != null && h.bibleDays > 7 ? "bad" : ""}>设定集：{h.bibleDays == null ? "还是空的" : `${h.bibleDays} 天前更新`}</li>
             <li>
-              待结算的票：新条目 {h.pending.new} 张，命中 {h.pending.hit} 张
+              待整理：新条目 {h.pending.new} 条，命中 {h.pending.hit} 次
             </li>
           </ul>
         ) : (
@@ -98,10 +112,10 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
               await runAll(setStep);
               setStep("");
               refresh();
-              toast("结账完成");
+              toast("整理完成");
             }}
           >
-            现在结账（脚本班 + 模型班）
+            现在整理（自动整理 + AI 整理）
           </AsyncButton>
           <AsyncButton
             onClick={async () => {
@@ -109,22 +123,22 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
               refresh();
             }}
           >
-            只跑脚本班
+            只跑自动整理
           </AsyncButton>
         </div>
         {step && <p className="legend">{step}……</p>}
         <p className="legend">
-          每天 {prefs.dailyAt} 自动结账；关闭应用时、下次打开发现漏跑时也会补跑。脚本班不花 API 费；模型班调 DeepSeek，给新写的章节做摘要、记人设变化、写日记、整理常驻页和作品圣经。
+          每天 {prefs.dailyAt} 自动做每日整理；关闭应用时、下次打开发现漏跑时也会补跑。自动整理不花 API 费；AI 整理调 DeepSeek，给新写的章节做摘要、记人设变化、写日记、整理核心摘要和设定集。
         </p>
       </div>
       <div className="panel">
-        <h3>结账日志</h3>
+        <h3>整理日志</h3>
         {log.length ? (
           <div className="log">
             {log.slice(0, 30).map((e, i) => (
               <div key={i} className={"log-e" + (e.ok ? "" : " bad")}>
                 <b>
-                  {new Date(e.at).toLocaleString()} · {e.kind === "script" ? "脚本班" : "模型班"}
+                  {fmtTime(e.at)} · {e.kind === "script" ? "自动整理" : "AI 整理"}
                 </b>
                 {e.lines.map((l, j) => (
                   <div key={j}>{l}</div>
@@ -133,7 +147,7 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
             ))}
           </div>
         ) : (
-          <Empty>还没有结账记录。</Empty>
+          <Empty>还没有整理记录。</Empty>
         )}
       </div>
     </div>
@@ -211,8 +225,8 @@ function ResidentTab({ work }: { work: string }) {
   }, [work]);
   return (
     <div className="panel">
-      <h3>常驻页 · 每次调用 AI 都会带上（{text.length} / {prefs.residentLimit} 字）</h3>
-      <textarea rows={18} value={text} onChange={(e) => setText(e.target.value)} placeholder="还没生成。可以点下面按需生成，或者等今晚结账。" />
+      <h3>核心摘要 · 每次调用 AI 都会带上（{text.length} / {prefs.residentLimit} 字）</h3>
+      <textarea rows={18} value={text} onChange={(e) => setText(e.target.value)} placeholder="还没生成。可以点下面按需生成，或者等今晚的每日整理。" />
       <div className="addrow">
         <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, prefs.residentLimit); toast("已保存"); }}>
           保存
@@ -230,7 +244,7 @@ function ResidentTab({ work }: { work: string }) {
           按当前数据重新拼（不调 AI）
         </button>
       </div>
-      <p className="legend">{at ? `上次整理：${new Date(at).toLocaleString()}。` : ""}一半写人物和写作规范（只缩不消失），一半写剧情事实和未收伏笔。你改过的内容会保留到下次模型班整理。</p>
+      <p className="legend">{at ? `上次整理：${fmtTime(at)}。` : ""}一半写人物和写作规范（只缩不消失），一半写剧情事实和未收伏笔。你改过的内容会保留到下次 AI 整理。</p>
     </div>
   );
 }
@@ -242,8 +256,8 @@ function BibleTab({ work }: { work: string }) {
   }, [work]);
   return (
     <div className="panel">
-      <h3>作品圣经 · 这本书已经定下、不能推翻的东西</h3>
-      <textarea rows={20} value={text} onChange={(e) => setText(e.target.value)} placeholder="世界规则、人物定论、重要物件、地点、时间线定点。模型班会从新写的章节里提炼进来，你也可以直接写。" />
+      <h3>设定集 · 这本书已经定下、不能推翻的东西</h3>
+      <textarea rows={20} value={text} onChange={(e) => setText(e.target.value)} placeholder="世界规则、人物定论、重要物件、地点、时间线定点。AI 整理会从新写的章节里提炼进来，你也可以直接写。" />
       <div className="addrow">
         <button className="btn primary" type="button" onClick={async () => { await mem.saveBible(work, text); toast("已保存"); }}>
           保存
@@ -266,7 +280,7 @@ function DiaryTab({ work }: { work: string }) {
           <summary>{d.day}</summary>
           <pre className="diary">{d.text}</pre>
         </details>
-      )) : <Empty>还没有日记。每天结账时模型班会写一份：今日进度、剧情推进、人物变化、伏笔变动、遗留问题。</Empty>}
+      )) : <Empty>还没有日记。每日整理时 AI 整理会写一份：今日进度、剧情推进、人物变化、伏笔变动、遗留问题。</Empty>}
     </div>
   );
 }
@@ -289,7 +303,7 @@ function ChangesTab() {
           <tbody>
             {cs.map((c) => (
               <tr key={c.id}>
-                <td className="num">{new Date(c.at).toLocaleString()}</td>
+                <td className="num">{fmtTime(c.at)}</td>
                 <td>{c.label}</td>
                 <td>
                   {c.undone ? (

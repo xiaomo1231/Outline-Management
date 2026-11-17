@@ -151,7 +151,7 @@ export interface Character {
   mut?: Record<string, FieldMut>;
 }
 
-/** 锁定：正文和 AI 都不能改，写出变化会报冲突；随剧情变化：结账时按正文自动记变化 */
+/** 锁定：正文和 AI 都不能改，写出变化会报冲突；随剧情变化：每日整理时按正文自动记变化 */
 export type FieldMut = "lock" | "dyn";
 
 /** 称呼表：A 叫 B 什么 */
