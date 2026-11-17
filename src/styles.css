@@ -32,6 +32,7 @@ input[type=range],input[type=checkbox]{accent-color:var(--accent)}
 .grid3{display:grid;gap:16px;align-items:start}
 #write .grid3{grid-template-columns:200px minmax(0,1fr) 300px}
 #style .grid3{grid-template-columns:260px minmax(0,1fr) minmax(0,380px)}
+@media (min-width:721px){#write .grid3>.toc,#write .grid3>.side{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto;overscroll-behavior:contain}}
 @media (max-width:1100px){#write .grid3{grid-template-columns:minmax(0,1fr) 280px}#write .toc{display:none}#style .grid3{grid-template-columns:240px minmax(0,1fr)}#style .out{grid-column:1/-1}}
 @media (max-width:720px){#write .grid3,#style .grid3{grid-template-columns:minmax(0,1fr)}}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0}
@@ -370,7 +371,7 @@ main{min-height:calc(100vh - 56px)}
 
 /* 写作页 */
 #editor{font-family:inherit;font-size:inherit;line-height:inherit}
-#editor .ProseMirror{outline:none;min-height:50vh}
+#editor .ProseMirror{outline:none;min-height:50vh;padding-bottom:30vh}
 #editor p{text-indent:var(--indent,2em)}
 #editor .ProseMirror p.is-editor-empty:first-child::before{content:attr(data-placeholder);color:var(--muted);float:left;height:0;pointer-events:none;text-indent:0}
 #editor span.aied{border-bottom:1.5px dashed var(--ai-line)}
