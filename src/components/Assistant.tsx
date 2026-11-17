@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore, toast } from "../lib/store";
 import * as repo from "../lib/repo";
 import * as mem from "../lib/memory";
-import { chat, errText, type Msg, type ToolDef } from "../lib/ai/client";
+import { AiError, chat, errText, type Msg, type ToolDef } from "../lib/ai/client";
 import { stablePrefix, type Ctx } from "../lib/ai/context";
 import { describe } from "../lib/chars";
 import { allChapters, findChapter, firstLine, guessDay, newChapter, newScene, plants, splitChapterOutline } from "../lib/outline";
@@ -10,6 +10,7 @@ import { phaseName } from "../lib/plan";
 import { clip, uid } from "../lib/util";
 import type { Chat, ChatMsg } from "../lib/types";
 import { ctx } from "../pages/outline/ctx";
+import { Md } from "./Md";
 
 const MODES: [string, string][] = [
   ["找思路", "给 3–5 个明显不同的方向，每个写清用到了哪些已有的线、会和什么冲突、代价是什么。只写方向，不写成段的正文。避开常见套路。"],
@@ -151,6 +152,16 @@ export default function Assistant() {
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const [noKey, setNoKey] = useState(false);
+  const charList = useStore((s) => s.chars);
+  const charNames = charList.map((c) => c.name).filter(Boolean);
+  const go = useStore((s) => s.go);
+
+  // 换页面时浮窗自动收起，不挡新页面；固定在右侧的不收
+  useEffect(() => {
+    if (!dock) setOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
   const listRef = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
 
@@ -236,6 +247,7 @@ export default function Assistant() {
       await persist(c);
     } catch (e) {
       setErr(errText(e));
+      setNoKey(e instanceof AiError && e.code === "nokey");
     } finally {
       setBusy("");
     }
@@ -323,12 +335,12 @@ export default function Assistant() {
       <div className="assist-list" ref={listRef}>
         {!chatObj?.msgs.length && (
           <div className="empty" style={{ padding: 8 }}>
-            我读得到这本书的人物、大纲、时间线、伏笔、记忆和正文。可以问“林照第一次见陈渡是哪章”，也可以让我找思路。用 @人名、@第12章、#伏笔 指定资料。默认只聊天，不会改你的作品。
+            我读得到这本书的人物、大纲、时间线、伏笔、记忆和正文。可以问“{charNames.length >= 2 ? `${charNames[0]}第一次见${charNames[1]}是哪章` : charNames.length ? `${charNames[0]}现在是什么状态` : "主角第一次登场是哪章"}”，也可以让我找思路。用 @{charNames[0] || "人名"}、@第12章、#伏笔 指定资料。默认只聊天，不会改你的作品。
           </div>
         )}
         {chatObj?.msgs.map((m, i) => (
           <div key={i} className={"msg " + (m.role === "user" ? "me" : "ai")}>
-            <div className="msg-t">{m.content}</div>
+            <div className="msg-t">{m.role === "assistant" ? <Md text={m.content} /> : m.content}</div>
             {m.refs && m.refs.length > 0 && (
               <div className="refs">
                 这次参考了：
@@ -364,7 +376,16 @@ export default function Assistant() {
           </div>
         ))}
         {busy && <div className="msg ai">{busy}……</div>}
-        {err && <p className="lint bad">{err}</p>}
+        {err && (
+          <p className="lint bad">
+            {err}
+            {noKey && (
+              <button className="btn sm" type="button" onClick={() => { setOpen(false); go("settings"); }}>
+                去设置里填密钥
+              </button>
+            )}
+          </p>
+        )}
       </div>
       {preview != null && (
         <div className="assist-preview">

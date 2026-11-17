@@ -522,3 +522,10 @@ table.keys{width:100%;border-collapse:collapse;font-size:13px}
 table.keys td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}
 table.keys td:first-child{white-space:nowrap;width:1%}
 .panel-wrap{display:flex;flex-direction:column;gap:8px}
+.md p{margin:0 0 6px}
+.md ul,.md ol{margin:0 0 6px;padding-left:1.4em}
+.md li{margin:2px 0}
+.md .md-h{font-weight:700}
+.md hr{border:0;border-top:1px solid var(--line);margin:8px 0}
+.msg-t .md:last-child p:last-child{margin-bottom:0}
+.msg.ai .msg-t{white-space:normal}
