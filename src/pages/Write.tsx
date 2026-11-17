@@ -4,6 +4,7 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { AiEdit, AiText, AiTracker, AI_META, aiChars } from "../components/aiMarks";
 import { ScanHighlight, scanKey, setBanWords } from "../components/scanDeco";
+import { KeepCaret } from "../components/keepCaret";
 import { useStore, toast, registerFlush } from "../lib/store";
 import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, type Snap } from "../lib/chapterSave";
 import { diffText } from "../lib/diff";
@@ -117,7 +118,7 @@ export default function Write() {
   const save = useMemo(() => debounce((id: string, ed: Editor) => saveNow(id, snapOf(ed)), 700), [work.id]);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight],
+    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight, KeepCaret],
     content: "",
     editorProps: {
       handlePaste: (_view, event) => {
