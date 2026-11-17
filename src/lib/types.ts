@@ -76,7 +76,7 @@ export interface Volume {
   words?: number | null;
 }
 
-export type EventType = "main" | "side" | "plant" | "pay";
+export type EventType = "main" | "side" | "plant" | "pay" | "hidden";
 
 export interface StoryEvent {
   id: Id;
@@ -98,6 +98,8 @@ export interface StoryEvent {
   reveal?: string;
   note?: string;
   sc?: Id;
+  /** 读者在哪一章得知（倒叙、揭秘时和发生的章不同） */
+  know?: Id | null;
   from?: string;
   ai?: boolean;
 }

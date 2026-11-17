@@ -50,3 +50,23 @@ describe("中文数字卷名", () => {
     expect([1, 2, 10, 11, 20, 25, 100, 105, 110].map(cnNum)).toEqual(["一", "二", "十", "十一", "二十", "二十五", "一百", "一百零五", "一百一十"]);
   });
 });
+
+import { dayLabel } from "../outline";
+describe("前史和负数天", () => {
+  it("天数写法", () => {
+    expect(dayLabel(3)).toBe("第 3 天");
+    expect(dayLabel(0)).toContain("开篇前");
+    expect(dayLabel(-5)).toBe("开篇前 5 天");
+    expect(dayLabel(null)).toBe("时间未定");
+  });
+  it("前史事件同步时默认不勾，预览天数和执行一致", () => {
+    const vols: Volume[] = [{ id: "v", title: "第一卷", chapters: [{ ...newChapter("开局"), scenes: [{ id: "s1", t: "回忆", goal: "", conf: "", who: [], plant: "", pay: "", day: -3 }] }] }];
+    const { items } = buildSync({ vols, events: [{ id: "e1", day: -10, ch: null, t: "灭门", who: "", ty: "hidden" }], plan: [] });
+    expect(items.find((x) => x.key === "Ae1")?.on).toBe(false);
+    const b = items.find((x) => x.key === "Bs1")!;
+    expect(b.lab).toContain("开篇前 3 天");
+    const d = { vols: structuredClone(vols), events: [] as any[], plan: [] };
+    b.run(d, []);
+    expect(d.events[0].day).toBe(-3);
+  });
+});

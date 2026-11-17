@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, applyVolumeSplit, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
+import { allChapters, applyVolumeSplit, dayLabel, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
 import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
@@ -278,10 +278,10 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                               </span>
                               <span className="sct">
                                 {s.t}
-                                {!D && s.day != null && <small>第 {s.day} 天</small>}
+                                {!D && s.day != null && <small>{dayLabel(s.day)}</small>}
                                 {D && (
                                   <small>
-                                    {s.day != null ? `第 ${s.day} 天${s.time ? " " + s.time : ""}` : "时间未定"}
+                                    {dayLabel(s.day)}{s.day != null && s.time ? " " + s.time : ""}
                                     {s.pov ? ` · ${s.pov}视角` : ""}
                                     {s.place ? ` · ${s.place}` : ""}
                                   </small>
@@ -351,7 +351,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
       // 已关联的事件保持一致
       if ((SHARE as readonly string[]).includes(k as string) && sc.ev) {
         const e = d.events.find((x) => x.id === sc.ev) as any;
-        if (e) e[k] = k === "day" ? v || 1 : v;
+        if (e) e[k] = k === "day" ? v ?? 1 : v;
       }
     });
   const plOpts: [string, string][] = [["", "未归属"]];
@@ -460,7 +460,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               </Field>
               <Field label="故事时间">
                 <div className="two">
-                  第<input type="number" min={0} value={s.day ?? ""} onChange={(e) => setSc("day", num(e.target.value))} aria-label="第几天" />天
+                  第<input type="number" value={s.day ?? ""} onChange={(e) => setSc("day", num(e.target.value))} aria-label="第几天" />天
                   <input value={s.time ?? ""} placeholder="时刻，如 23:40" onChange={(e) => setSc("time", e.target.value)} aria-label="时刻" />
                 </div>
               </Field>
@@ -542,9 +542,11 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               className="btn"
               type="button"
               onClick={() => {
-                trashScene(useStore.getState().work!.id, r.v, r.c, sel.s);
+                const linked = s.ev && useStore.getState().events.find((x) => x.id === s.ev);
+                const drop = !!linked && confirm(`这个场景关联了时间线上的事件「${linked.t}」。\n要把事件也一起删掉吗？\n\n选「确定」一起删；选「取消」只删场景，事件留在时间线上。`);
+                trashScene(useStore.getState().work!.id, r.v, r.c, sel.s, drop);
                 setSel({ ch: r.ch.id, s: -1 });
-                toast("场景已放进回收站，时间线上的事件保留");
+                toast(drop ? "场景已放进回收站，时间线上的事件也删了" : linked ? "场景已放进回收站，时间线上的事件保留" : "场景已放进回收站");
               }}
             >
               删除场景

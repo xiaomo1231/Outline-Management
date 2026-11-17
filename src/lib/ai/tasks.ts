@@ -307,7 +307,7 @@ ${text.slice(0, 30000)}
 已经记录的事件（不要重复）：${known.join("；") || "无"}
 上一章大致在故事第 ${Math.max(1, ...c.events.filter((e) => e.ch && allChapters(c.vols).find((x) => x.ch.id === e.ch && x.no < r.no)).map((e) => e.day))} 天。
 
-返回 JSON：{"events":[{"day":第几天,"time":"时刻，可空","t":"一句话事件","who":"人物，用顿号分隔","ty":"main|side|plant|pay","place":"地点","fore":"如果是伏笔，写伏笔名"}]}`),
+返回 JSON：{"events":[{"day":第几天,"time":"时刻，可空","t":"一句话事件","who":"人物，用顿号分隔","ty":"main|side|plant|pay|hidden（hidden 是读者暂时看不到的暗线、幕后发生的事）","place":"地点","fore":"如果是伏笔，写伏笔名"}]}`),
     ],
     { temperature: 0.3 },
   );

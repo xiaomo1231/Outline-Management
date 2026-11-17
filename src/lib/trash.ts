@@ -34,7 +34,7 @@ export async function trashChapter(work: Id, v: number, c: number, no: number) {
 }
 
 /** 删场景 */
-export async function trashScene(work: Id, v: number, c: number, si: number) {
+export async function trashScene(work: Id, v: number, c: number, si: number, dropEvent = false) {
   const s = useStore.getState();
   const ch = s.vols[v]?.chapters[c];
   const sc = ch?.scenes[si];
@@ -42,8 +42,11 @@ export async function trashScene(work: Id, v: number, c: number, si: number) {
   const item: TrashItem = { id: uid("tr"), kind: "scene", at: Date.now(), label: `场景「${sc.t || "（无题）"}」（${ch.title || "无题章"}）`, parent: ch.id, index: si, data: sc };
   s.editMany(["vols", "events"], (d) => {
     const x = d.vols[v].chapters[c].scenes[si];
-    const e = x.ev && d.events.find((y) => y.id === x.ev);
-    if (e) delete e.sc;
+    const ei = x.ev ? d.events.findIndex((y) => y.id === x.ev) : -1;
+    if (ei >= 0) {
+      if (dropEvent) d.events.splice(ei, 1);
+      else delete d.events[ei].sc;
+    }
     d.vols[v].chapters[c].scenes.splice(si, 1);
   });
   await saveTrash(work, [item, ...(await listTrash(work))]);

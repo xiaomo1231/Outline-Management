@@ -533,3 +533,10 @@ table.keys td:first-child{white-space:nowrap;width:1%}
 .tree .fold,.cht .fold{background:none;border:0;padding:0 4px;color:var(--muted);cursor:pointer;font-size:12px}
 .vol-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 12px}
 .vol-meta input{width:100%}
+table.lanes{border-collapse:collapse;font-size:12.5px;min-width:100%}
+table.lanes th,table.lanes td{border:1px solid var(--line);padding:4px;vertical-align:top;min-width:110px}
+table.lanes thead th{font-weight:600;color:var(--muted);white-space:nowrap}
+table.lanes tbody th{white-space:nowrap;text-align:left;position:sticky;left:0;background:var(--surface);min-width:70px}
+.tl .pre .day{color:var(--muted);font-style:italic}
+.dup{background:rgba(200,150,40,.12);border-radius:8px;padding:6px 10px;margin:6px 0;font-size:13px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.evd h3,.panel h3:has(.seg){display:flex;justify-content:space-between;align-items:center;gap:8px}
