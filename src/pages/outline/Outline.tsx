@@ -7,6 +7,7 @@ import { Tree, TreeActions, type Sel } from "./Tree";
 import { EventActions, Events } from "./Events";
 import { Plan, PlanActions } from "./Plan";
 import { names } from "./ctx";
+import { Guide } from "../../components/Guide";
 
 export type Say = (node: ReactNode) => void;
 type Tab = "chars" | "tree" | "events" | "plan";
@@ -16,6 +17,46 @@ const HINT: Record<Tab, string> = {
   tree: "拖动 ⋮⋮ 调整章节和场景顺序，点章或场景在右边编辑。「详细版」放开视角、故事时间、地点、转折、结果、情绪、信息揭示等全部字段。「同步」可以把大纲导入时间线和篇幅规划，也能反过来导入。",
   events: "事件按故事内的时间排。伏笔的埋和收也是事件。点任一事件打开事件卡，「详细版」可以写起因、经过、结果、影响、信息揭示和前后因果。「同步」会把还没进大纲的事件变成场景，也会把大纲里的场景加进时间线。",
   plan: "给每个事件段定总章数和阶段，段与段之间留几章过渡。拖动标尺上的竖线，或直接改数字。「同步到大纲」会给章节标上所属阶段、补建空章；大纲里改了章的归属，也能回写到这里。",
+};
+
+const GUIDES: Record<Tab, { title: string; steps: ReactNode[]; tip?: ReactNode }> = {
+  chars: {
+    title: "人物怎么用",
+    steps: [
+      "点「＋ 加人物」，先填名字、身份和几项最重要的设定，其余空着也没关系。",
+      "空着的项可以点「AI 起草空白项」；已经写了几章的，点「从正文整理人物」让 AI 从正文里提取。",
+      "字段旁的「锁定 / 随剧情变化」可以点：锁定的设定写出矛盾会提醒你；随剧情变化的（比如毁容、换装）会在每日小结时自动记进人设时间轴。",
+    ],
+    tip: "写正文时，AI 只会看到本章出场的人物，并按这一章时的状态来写。",
+  },
+  tree: {
+    title: "大纲怎么写",
+    steps: [
+      "先点卷名旁的「卷大纲」，用几句话写这一卷（或接下来几章）的完整走向。",
+      "写好后点「AI 拆成逐章大纲」，AI 会按你定的章数拆出每章的章名、本章大纲和场景，场景自动加进时间线。也可以在同一页里自己逐章写。",
+      "点左边任一章，在右边改「本章大纲」、加场景；拖动 ⋮⋮ 调整顺序。",
+      "写正文时 AI 会照着卷大纲、本章大纲和场景来写，所以大纲写得越清楚，AI 越不跑偏。",
+    ],
+    tip: "只有一个想法时，也可以在上面「一句话拆成场景」里写一句，AI 拆成几个场景放进选中的章。",
+  },
+  events: {
+    title: "时间线怎么用",
+    steps: [
+      "时间线按故事里的时间（第几天、几点）排列所有事件，用来检查先后顺序和伏笔。",
+      "大纲里 AI 拆出来的场景会自动出现在这里；自己写的场景，在场景卡里点「加入时间线」，或用上面的「同步」一次性导入。",
+      "已经关联的场景和事件会自动保持一致：改了场景的时间、地点、结果，这里跟着变，反过来也一样。",
+      "伏笔的「埋」和「收」也是事件，方便看哪些还没收。",
+    ],
+  },
+  plan: {
+    title: "篇幅规划怎么用",
+    steps: [
+      "把全书分成几个事件段，每段定总章数和几个阶段（铺垫、推进、高潮、收尾）。",
+      "拖动标尺上的竖线或直接改数字调整长短。",
+      "点「同步」把规划写回大纲：章节会标上属于哪个阶段，写正文时 AI 会知道这一章在节奏上的位置。",
+    ],
+    tip: "不想规划这么细可以跳过，大纲和正文照样能用。",
+  },
 };
 
 export default function Outline() {
@@ -39,7 +80,7 @@ export default function Outline() {
             [
               ["chars", "人物"],
               ["tree", "大纲"],
-              ["events", "事件"],
+              ["events", "时间线"],
               ["plan", "篇幅规划"],
             ] as [Tab, string][]
           ).map(([k, l]) => (
@@ -53,6 +94,7 @@ export default function Outline() {
         {tab === "events" && <EventActions mode={emode} setMode={setEmode} say={say} onSync={() => openSync("events")} />}
         {tab === "plan" && <PlanActions say={say} onSync={() => openSync("plan")} />}
       </div>
+      <Guide id={"outline-" + tab} {...GUIDES[tab]} />
       <div className="grid-ol">
         <div>
           {tab === "chars" && (cmode === "simple" ? <SimpleChars say={say} /> : <DetailChars say={say} />)}

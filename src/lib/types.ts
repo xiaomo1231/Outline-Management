@@ -48,6 +48,8 @@ export interface Chapter {
   status: ChapterStatus;
   scenes: Scene[];
   fn?: string;
+  /** 本章大纲：这一章发生什么，几句话 */
+  ol?: string;
   w?: number | null;
   hook?: string;
   note?: string;
@@ -63,6 +65,10 @@ export interface Volume {
   title: string;
   chapters: Chapter[];
   summary?: string;
+  /** 卷大纲：这一卷（或一段几章的剧情）的完整走向 */
+  outline?: string;
+  /** 打算写几章，AI 拆章时用 */
+  plan?: number | null;
 }
 
 export type EventType = "main" | "side" | "plant" | "pay";

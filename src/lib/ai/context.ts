@@ -90,12 +90,17 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
       refs.push(`第${last.no}章结尾`);
     }
   }
+  const vol = c.vols[r.v];
+  if (vol?.outline?.trim()) {
+    parts.push(`=== 本卷大纲（${vol.title}）===\n` + vol.outline.trim());
+    refs.push("卷大纲");
+  }
   if (r.ch.pl) parts.push(`本章在篇幅规划里属于：${phaseName(c.plan, r.ch.pl)}${c.plan[r.ch.pl.a]?.ph[r.ch.pl.p]?.g ? "，这一阶段的目标：" + c.plan[r.ch.pl.a].ph[r.ch.pl.p].g : ""}`);
   return { text: parts.join("\n\n"), refs };
 }
 
 export function outlineOf(_c: Ctx, r: ChRef): string {
-  const lines = [`第${r.no}章 ${r.ch.title || "（未命名）"}${r.ch.fn ? "｜本章作用：" + r.ch.fn : ""}${r.ch.hook ? "｜章末钩子：" + r.ch.hook : ""}`];
+  const lines = [`第${r.no}章 ${r.ch.title || "（未命名）"}${r.ch.ol ? "｜本章大纲：" + r.ch.ol : ""}${r.ch.fn ? "｜本章作用：" + r.ch.fn : ""}${r.ch.hook ? "｜章末钩子：" + r.ch.hook : ""}`];
   r.ch.scenes.forEach((s, i) => {
     const bits = [s.goal && "目标：" + s.goal, s.conf && "冲突：" + s.conf, s.turn && "转折：" + s.turn, s.result && "结果：" + s.result, s.who.length && "人物：" + s.who.join("、"), s.pov && "视角：" + s.pov, s.place && "地点：" + s.place, s.day && `故事时间：第${s.day}天${s.time ? " " + s.time : ""}`, s.plant && "埋伏笔：" + s.plant, s.pay && "收伏笔：" + s.pay, s.reveal && "信息揭示：" + s.reveal, (s.moodA || s.moodB) && `情绪：${s.moodA || "?"}→${s.moodB || "?"}`, s.pace && "节奏：" + s.pace, s.words && `约 ${s.words} 字`].filter(Boolean);
     lines.push(`场景${i + 1}「${s.t}」${bits.join("；")}`);

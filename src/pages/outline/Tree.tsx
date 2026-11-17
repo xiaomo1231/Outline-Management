@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, findScene, newChapter, newScene, SHARE, sceneToEvent, type ChRef } from "../../lib/outline";
+import { allChapters, applyVolumeSplit, findScene, newChapter, newScene, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
 import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
@@ -15,6 +15,8 @@ import { trashChapter, trashScene } from "../../lib/trash";
 export interface Sel {
   ch: string | null;
   s: number;
+  /** 选中了某一卷（看卷大纲） */
+  vol?: string | null;
 }
 
 const ST = ["大纲", "写作中", "已写"];
@@ -134,13 +136,17 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                 if (!split.trim() || !cur) return toast("先写一句话，再选好要放进的章");
                 try {
                   const scenes = await T.splitScenes(ctx(), split, cur);
-                  useStore.getState().aiEdit(`拆场景：${split.slice(0, 12)}`, ["vols"], (d) => {
+                  useStore.getState().aiEdit(`拆场景：${split.slice(0, 12)}`, ["vols", "events"], (d) => {
                     const ch = d.vols[cur.v].chapters[cur.c];
-                    ch.scenes.push(...scenes.map((s) => ({ ...s, id: uid("s") })));
+                    const add = scenes.map((s) => ({ ...s, id: uid("s") }));
+                    ch.scenes.push(...add);
+                    const r = allChapters(d.vols as any).find((x) => x.ch.id === ch.id)!;
+                    for (const sc of ch.scenes) if (add.some((a) => a.id === sc.id)) sceneToEvent(d.vols as any, d.events as any, sc as any, r);
+                    sortEvents(d.events as any);
                   });
                   say(
                     <>
-                      <p style={{ margin: "0 0 8px" }}>拆成了 {scenes.length} 个场景，放进第{cur.no}章。</p>
+                      <p style={{ margin: "0 0 8px" }}>拆成了 {scenes.length} 个场景，放进第{cur.no}章，也加进了时间线。</p>
                       <p className="empty" style={{ margin: 0 }}>只给了每场的目标和冲突，没写对白和描写，正文留给你。</p>
                     </>,
                   );
@@ -160,7 +166,16 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
             <div className="vol" key={v.id}>
               <h4>
                 <input className="vol-name" value={v.title} aria-label="卷名" onChange={(e) => edit("vols", (d) => void (d[vi].title = e.target.value))} />
+                <button className={"btn vol-ol" + (sel.vol === v.id ? " on" : "")} type="button" onClick={() => setSel({ ch: null, s: -1, vol: v.id })} title="写这一卷的完整大纲，再逐章细分">
+                  卷大纲{v.outline?.trim() ? "" : "（未写）"}
+                </button>
               </h4>
+              {v.outline?.trim() && (
+                <div className="vol-sum" onClick={() => setSel({ ch: null, s: -1, vol: v.id })}>
+                  {v.outline.trim().slice(0, 80)}
+                  {v.outline.trim().length > 80 ? "……" : ""}
+                </div>
+              )}
               {chs
                 .filter((r) => r.v === vi)
                 .map((r) => {
@@ -196,7 +211,8 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                           {r.ch.status} · {r.ch.scenes.length} 场{D && r.ch.w ? ` · ${r.ch.w} 字` : ""}
                         </span>
                       </div>
-                      {D && r.ch.fn && <div className="fn">{r.ch.fn}</div>}
+                      {r.ch.ol?.trim() && <div className="fn">{r.ch.ol.trim().slice(0, 60)}{r.ch.ol.trim().length > 60 ? "……" : ""}</div>}
+                      {D && r.ch.fn && <div className="fn">作用：{r.ch.fn}</div>}
                       {r.ch.scenes.length > 0 && (
                         <ul className="scs">
                           {r.ch.scenes.map((s, si) => (
@@ -278,8 +294,10 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const edit = useStore((s) => s.edit);
   const editMany = useStore((s) => s.editMany);
   const openChapter = useStore((s) => s.openChapter);
+  const vi = sel.vol ? vols.findIndex((v) => v.id === sel.vol) : -1;
+  if (vi >= 0) return <VolCard vi={vi} setSel={setSel} say={say} />;
   const r = allChapters(vols).find((x) => x.ch.id === sel.ch);
-  if (!r) return <div className="panel det"><Empty>点左侧的章或场景来编辑。</Empty></div>;
+  if (!r) return <div className="panel det"><Empty>点左侧的章或场景来编辑，或点卷名旁的「卷大纲」先写整卷的走向。</Empty></div>;
   const s = sel.s >= 0 ? r.ch.scenes[sel.s] : undefined;
   const D = mode === "detail";
   const nm = chars.map((c) => c.name).filter(Boolean);
@@ -309,6 +327,9 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
           <h3>章卡 · 第{r.no}章</h3>
           <Field label="章名">
             <input className="t" value={r.ch.title} onChange={(e) => setCh("title", e.target.value)} aria-label="章名" />
+          </Field>
+          <Field label="本章大纲" hint="这一章发生什么，几句话就够。写正文时 AI 会照着它来">
+            <textarea rows={3} value={r.ch.ol ?? ""} placeholder="例如：主角夜探档案室，发现父亲的名字被涂掉；被管理员撞见，只好编了个谎" onChange={(e) => setCh("ol", e.target.value)} />
           </Field>
           <Field label="状态">
             <select value={r.ch.status} onChange={(e) => setCh("status", e.target.value)} aria-label="状态">
@@ -474,6 +495,88 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
         </>
       )}
       <span hidden>{names().length}</span>
+    </div>
+  );
+}
+
+function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; say: Say }) {
+  const vols = useStore((s) => s.vols);
+  const edit = useStore((s) => s.edit);
+  const v = vols[vi];
+  const chs = allChapters(vols).filter((r) => r.v === vi);
+  const [n, setN] = useState<number>(v.plan || Math.max(chs.length, 6));
+  const [tl, setTl] = useState(true);
+  const setV = (k: "outline" | "plan", val: any) => edit("vols", (d) => void ((d[vi] as any)[k] = val));
+  const setOl = (c: number, k: "title" | "ol", val: string) => edit("vols", (d) => void ((d[vi].chapters[c] as any)[k] = val));
+
+  return (
+    <div className="panel det">
+      <h3>卷大纲 · {v.title || `第${vi + 1}卷`}</h3>
+      <Field label="整卷走向" hint="这一卷（或接下来几章）从哪里开始、经过哪些转折、到哪里结束。写多写少都行">
+        <textarea
+          rows={8}
+          value={v.outline ?? ""}
+          placeholder={"例如：\n主角被调到边城，起初只想混日子；\n第一次出城巡查撞见走私，顺藤摸瓜查到上司；\n上司反咬一口，主角被关进地牢；\n狱中结识老兵，得知父亲旧案的线索；\n卷末越狱，决定回京翻案。"}
+          onChange={(e) => setV("outline", e.target.value)}
+        />
+      </Field>
+      <div className="addrow" style={{ marginTop: 4, flexWrap: "wrap" }}>
+        <label className="legend" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+          拆成
+          <input type="number" min={1} max={40} value={n} style={{ width: 64 }} aria-label="拆成几章" onChange={(e) => { const x = Math.max(1, Math.min(40, +e.target.value || 1)); setN(x); setV("plan", x); }} />
+          章
+        </label>
+        <label className="legend" style={{ display: "flex", alignItems: "center", gap: 4, margin: 0 }}>
+          <input type="checkbox" checked={tl} onChange={(e) => setTl(e.target.checked)} />
+          新场景加进时间线
+        </label>
+        <AsyncButton
+          primary
+          disabled={!v.outline?.trim()}
+          title={v.outline?.trim() ? "" : "先写卷大纲"}
+          onClick={async () => {
+            say(<Empty>正在把卷大纲拆成 {n} 章……</Empty>);
+            try {
+              const list = await T.splitVolume(ctx(), vi, n);
+              let res = { filled: 0, added: 0, scenes: 0 };
+              useStore.getState().aiEdit(`拆卷大纲：${v.title}`, ["vols", "events"], (d) => {
+                res = applyVolumeSplit(d.vols as any, d.events as any, vi, list, tl);
+              });
+              say(
+                <>
+                  <p style={{ margin: "0 0 6px" }}>
+                    拆成了 {list.length} 章：补全已有的 {res.filled} 章，新建 {res.added} 章，一共 {res.scenes} 个场景{tl ? "，都加进了时间线" : ""}。
+                  </p>
+                  <p className="empty" style={{ margin: 0 }}>你已经写过的章名、大纲和场景都没动，只填了空着的地方。不满意可以在「记忆」页的变更记录里整组撤销。</p>
+                </>,
+              );
+            } catch (e) {
+              say(<p className="lint bad">{errText(e)}</p>);
+            }
+          }}
+        >
+          AI 拆成逐章大纲
+        </AsyncButton>
+      </div>
+      <h4 className="dh">逐章大纲</h4>
+      {!chs.length && <Empty>这一卷还没有章。可以自己加，也可以写好卷大纲后让 AI 拆。</Empty>}
+      <div className="vol-chs">
+        {chs.map((r) => (
+          <div key={r.ch.id} className="vol-ch">
+            <div className="vol-ch-t">
+              <button type="button" className="linkish" onClick={() => setSel({ ch: r.ch.id, s: -1 })} title="打开章卡">
+                第{r.no}章
+              </button>
+              <input value={r.ch.title} placeholder="章名" aria-label={`第${r.no}章章名`} onChange={(e) => setOl(r.c, "title", e.target.value)} />
+              <small>{r.ch.scenes.length} 场</small>
+            </div>
+            <textarea rows={2} value={r.ch.ol ?? ""} placeholder="这一章发生什么" aria-label={`第${r.no}章大纲`} onChange={(e) => setOl(r.c, "ol", e.target.value)} />
+          </div>
+        ))}
+      </div>
+      <button className="btn" type="button" onClick={() => edit("vols", (d) => void d[vi].chapters.push(newChapter("")))}>
+        ＋ 在这一卷加一章
+      </button>
     </div>
   );
 }

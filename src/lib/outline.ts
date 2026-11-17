@@ -239,3 +239,57 @@ export function plants(vols: Volume[], events: StoryEvent[]): Plant[] {
   }
   return [...m.values()];
 }
+
+/* ---------------- 卷大纲拆成逐章大纲 ---------------- */
+
+export interface SplitChapterIn {
+  t: string;
+  ol: string;
+  hook?: string;
+  scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string; day?: number | null; place?: string }[];
+}
+
+/**
+ * 把 AI 拆好的逐章大纲放进第 v 卷：按顺序先填这一卷已有的章（只填空着的章名、大纲、钩子；
+ * 已经有场景的章不加场景），不够再在卷末新建章。新场景自动加进时间线。
+ */
+export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number, list: SplitChapterIn[], toTimeline = true): { filled: number; added: number; scenes: number } {
+  const vol = vols[v];
+  let filled = 0;
+  let added = 0;
+  let scenes = 0;
+  const fresh = new Set<string>();
+  if (!vol) return { filled, added, scenes };
+  list.forEach((x, i) => {
+    let ch = vol.chapters[i];
+    if (ch) {
+      let touched = false;
+      if (!ch.title.trim() && x.t) (ch.title = x.t), (touched = true);
+      if (!ch.ol?.trim() && x.ol) (ch.ol = x.ol), (touched = true);
+      if (!ch.hook?.trim() && x.hook) (ch.hook = x.hook), (touched = true);
+      if (ch.scenes.length) {
+        if (touched) filled++;
+        return;
+      }
+      if (touched || x.scenes.length) filled++;
+    } else {
+      ch = { ...newChapter(x.t), ol: x.ol, hook: x.hook || "" };
+      vol.chapters.push(ch);
+      added++;
+    }
+    for (const s of x.scenes) {
+      const sc: Scene = { ...newScene(s.t), goal: s.goal, conf: s.conf, who: s.who, plant: s.plant || "", pay: s.pay || "", day: s.day ?? null, place: s.place || "", ai: true };
+      ch.scenes.push(sc);
+      fresh.add(sc.id);
+      scenes++;
+    }
+  });
+  if (toTimeline) {
+    for (const r of allChapters(vols)) {
+      if (r.v !== v) continue;
+      for (const s of r.ch.scenes) if (fresh.has(s.id) && !s.ev) sceneToEvent(vols, events, s, r);
+    }
+    sortEvents(events);
+  }
+  return { filled, added, scenes };
+}
