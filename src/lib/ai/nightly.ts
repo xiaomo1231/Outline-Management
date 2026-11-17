@@ -1,4 +1,4 @@
-// 模型班：脚本班跑完后才动。给新写的章节做摘要、提取人设变化和新事实、写写作日记、整理常驻页和作品圣经。
+// AI 整理：自动整理跑完后才动。给新写的章节做摘要、提取人设变化和新事实、写写作日记、整理核心摘要和设定集。
 import { chat, chatJson } from "./client";
 import type { Ctx } from "./context";
 import { useStore } from "../store";
@@ -21,7 +21,7 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
   const log = await mem.getLog(c.work.id);
   const lastScript = log.find((e) => e.kind === "script");
   if (!lastScript || lastScript.day !== today() || !lastScript.ok) {
-    const e: mem.MemLogEntry = { at: Date.now(), day: today(), kind: "model", ok: false, lines: ["今天的脚本班还没跑完，模型班不动。"] };
+    const e: mem.MemLogEntry = { at: Date.now(), day: today(), kind: "model", ok: false, lines: ["今天的自动整理还没跑完，AI 整理不动。"] };
     await mem.appendLog(c.work.id, e);
     return e;
   }
@@ -47,7 +47,7 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
       ], { temperature: 0.2 });
       const now = Date.now();
       const conflicts: string[] = [];
-      useStore.getState().aiEdit(`第${r.no}章结账：摘要和人设变化`, ["vols", "chars"], (dr) => {
+      useStore.getState().aiEdit(`第${r.no}章每日整理：摘要和人设变化`, ["vols", "chars"], (dr) => {
         const ch = dr.vols[r.v]?.chapters[r.c];
         if (ch) {
           ch.summary = d.summary;
@@ -90,30 +90,30 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
     await repo.saveDiary(c.work.id, today(), diary.content.trim());
     lines.push("写作日记已生成。");
 
-    // 3. 常驻页压短捋顺
-    onStep?.("整理常驻页");
+    // 3. 核心摘要压短捋顺
+    onStep?.("整理核心摘要");
     const facts = await mem.items(c.work.id, 1);
     const raw = mem.buildResident(cur.work, cur.chars, cur.vols, cur.events, compileStyle(cur.style), facts, residentLimit * 2);
     const res = await chat([
-      { role: "system", content: `你整理小说的「常驻页」：每次调用 AI 都会带上它。一半写人物当前状态和写作规范，一半写剧情事实和未收伏笔。压到 ${residentLimit} 字以内，信息不丢，去掉重复，用短句。直接输出正文。` },
+      { role: "system", content: `你整理小说的「核心摘要」：每次调用 AI 都会带上它。一半写人物当前状态和写作规范，一半写剧情事实和未收伏笔。压到 ${residentLimit} 字以内，信息不丢，去掉重复，用短句。直接输出正文。` },
       { role: "user", content: raw },
     ], { temperature: 0.2 });
     const text = res.content.trim().slice(0, Math.round(residentLimit * 1.1));
     await mem.saveResident(c.work.id, text, residentLimit);
-    lines.push(`常驻页 ${text.length} 字（上限 ${residentLimit}）。`);
+    lines.push(`核心摘要 ${text.length} 字（上限 ${residentLimit}）。`);
 
-    // 4. 作品圣经：只提炼「这本书定下了什么」
-    onStep?.("更新作品圣经");
+    // 4. 设定集：只提炼「这本书定下了什么」
+    onStep?.("更新设定集");
     const bible = await mem.getBible(c.work.id);
     const sums = todo.map((r) => `第${r.no}章：${s.vols[r.v]?.chapters[r.c]?.summary ?? ""}`).join("\n");
     if (sums) {
       const b = await chat([
-        { role: "system", content: "你维护小说的「作品圣经」：只记已经确立、以后不能推翻的设定和事实，按类别分组（世界规则、人物定论、重要物件、地点、时间线定点）。保留已有条目，加入新的，删除重复。直接输出全文。" },
-        { role: "user", content: `现有作品圣经：\n${bible.text || "（空）"}\n\n新写的章节摘要：\n${sums}` },
+        { role: "system", content: "你维护小说的「设定集」：只记已经确立、以后不能推翻的设定和事实，按类别分组（世界规则、人物定论、重要物件、地点、时间线定点）。保留已有条目，加入新的，删除重复。直接输出全文。" },
+        { role: "user", content: `现有设定集：\n${bible.text || "（空）"}\n\n新写的章节摘要：\n${sums}` },
       ], { temperature: 0.2 });
       await mem.saveBible(c.work.id, b.content.trim());
-      lines.push("作品圣经已更新。");
-    } else lines.push("没有新章节，作品圣经不动。");
+      lines.push("设定集已更新。");
+    } else lines.push("没有新章节，设定集不动。");
 
     const e: mem.MemLogEntry = { at: Date.now(), day: today(), kind: "model", ok: true, lines };
     await mem.appendLog(c.work.id, e);

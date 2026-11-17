@@ -7,6 +7,7 @@ import { Seg, Empty } from "./ui";
 import * as T from "../lib/ai/tasks";
 import { errText } from "../lib/ai/client";
 import { uid } from "../lib/util";
+import { toast } from "../lib/store";
 
 type Slot = "core" | "sub" | "accent";
 const SLOT_NAME: Record<Slot, string> = { core: "核心风格", sub: "次级风格", accent: "点缀" };
@@ -25,6 +26,7 @@ export default function StyleBuilder({ value, onChange }: { value: StyleSetup; o
     if (slot === "core") n.core = id;
     else n[slot] = [...n[slot], id];
     onChange(n);
+    toast(`已放进「${SLOT_NAME[slot]}」：${blockById(n, id)?.name ?? ""}`);
   }
   function remove(id: string) {
     onChange({ ...s, core: s.core === id ? null : s.core, sub: s.sub.filter((x) => x !== id), accent: s.accent.filter((x) => x !== id) });

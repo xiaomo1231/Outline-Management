@@ -8,9 +8,9 @@ import { isTauri } from "../lib/db";
 import { allChapters, newChapter } from "../lib/outline";
 import { buildDocx, type DocBlock } from "../lib/docx";
 import { exportPack, importPack, isPack, workExists } from "../lib/pack";
-import { parseBook, plainOf, textToHtml } from "../lib/importTxt";
+import { guessMeta, parseBook, plainOf, textToHtml, type ParsedBook } from "../lib/importTxt";
 import { decode } from "../lib/corpus";
-import { countWords, uid } from "../lib/util";
+import { countWords, fmtTime, uid } from "../lib/util";
 import { AsyncButton, Empty } from "../components/ui";
 import type { TrashItem, Volume, Work } from "../lib/types";
 
@@ -143,37 +143,53 @@ export function ExportPanel() {
 
 /* ---------- 导入 ---------- */
 
-/** 导入 txt 成一本新书，返回作品 id */
-export async function importTxtBook(): Promise<string | null> {
+export interface TxtPick {
+  book: ParsedBook;
+  name: string;
+  author: string;
+  intro: string;
+}
+
+/** 选一个 txt，切好卷章，猜好书名，先给用户预览 */
+export async function pickTxtBook(): Promise<TxtPick | null> {
   const buf = await pickFile(["txt"], "TXT 小说");
   if (!buf) return null;
-  const book = parseBook(decode(buf));
+  const raw = decode(buf);
+  const book = parseBook(raw);
   const chapters = book.vols.reduce((a, v) => a + v.chapters.length, 0);
   if (!chapters) {
     toast("这个文件是空的");
     return null;
   }
-  const name = prompt(`识别到 ${book.vols.length} 卷、${chapters} 章。书名叫什么？`, "导入的作品");
-  if (!name) return null;
+  return { book, ...guessMeta(raw, book.preface) };
+}
+
+/** 按预览的结果建书，返回作品 id */
+export async function createFromTxt(p: TxtPick): Promise<string> {
   const vols: Volume[] = [];
   const texts: { id: string; text: string }[] = [];
-  for (const v of book.vols) {
+  let chapters = 0;
+  for (const v of p.book.vols) {
     const vol: Volume = { id: uid("v"), title: v.title, chapters: [] };
     for (const c of v.chapters) {
       const ch = { ...newChapter(c.title), status: "已写" as const };
       vol.chapters.push(ch);
       texts.push({ id: ch.id, text: c.text });
+      chapters++;
     }
     vols.push(vol);
   }
+  const name = p.name.trim() || "导入的作品";
   const s = useStore.getState();
-  const id = await s.createWork({ name, intro: book.preface.slice(0, 300), goal: 4000, chapWords: 3000 }, { vols });
+  const id = await s.createWork({ name, intro: p.intro.trim().slice(0, 300), goal: 2000, chapWords: 3000 }, { vols });
   for (const t of texts) {
     const plain = plainOf(t.text);
     await repo.saveText(id, t.id, textToHtml(t.text), plain, countWords(plain), 0);
   }
   // 导入不算今天写的字
   await (await import("../lib/db")).getDb().then((db) => db.exec(`DELETE FROM daily WHERE work_id=?`, [id]));
+  // 打开时停在最后一章，接着写
+  if (texts.length) await repo.setSetting("lastChapter:" + id, texts[texts.length - 1].id);
   toast(`已导入《${name}》：${chapters} 章`);
   return id;
 }
@@ -194,7 +210,7 @@ export async function importPackFile(): Promise<string | null> {
     return null;
   }
   const ex = await workExists(p.work.id);
-  if (ex && !confirm(`这台电脑上已经有《${p.work.name}》${ex.deleted ? "（在回收站里）" : ""}。用作品包（导出于 ${new Date(p.exportedAt).toLocaleString()}）整本覆盖它吗？覆盖前会先备份数据库。`)) return null;
+  if (ex && !confirm(`这台电脑上已经有《${p.work.name}》${ex.deleted ? "（在回收站里）" : ""}。用作品包（导出于 ${fmtTime(p.exportedAt)}）整本覆盖它吗？覆盖前会先备份数据库。`)) return null;
   if (ex) {
     const r = await bk.backup();
     if (r.startsWith("备份失败")) {
@@ -236,7 +252,7 @@ export function BackupPanel() {
   return (
     <div className="panel">
       <h3>备份与恢复</h3>
-      <p className="legend">每天结账、关窗、写作时每 2 小时各备份一次。最近 24 份全留，另外 14 天里每天留一份。</p>
+      <p className="legend">每日整理、关窗、写作时每 2 小时各备份一次。最近 24 份全留，另外 14 天里每天留一份。</p>
       <div className="addrow">
         <AsyncButton
           onClick={async () => {
@@ -285,7 +301,7 @@ export function BackupPanel() {
           <tbody>
             {list.map((b) => (
               <tr key={b.name}>
-                <td className="num">{new Date(b.at).toLocaleString()}</td>
+                <td className="num">{fmtTime(b.at)}</td>
                 <td className="num">{b.size != null ? (b.size / 1048576).toFixed(1) + " MB" : ""}</td>
                 <td>
                   {work && (
@@ -301,7 +317,7 @@ export function BackupPanel() {
                   )}{" "}
                   <AsyncButton
                     onClick={async () => {
-                      if (!confirm(`把所有作品恢复到 ${new Date(b.at).toLocaleString()} 的样子？这之后写的内容会被替换掉（恢复前会自动备份一份现在的数据，反悔可以再恢复回来）。`)) return;
+                      if (!confirm(`把所有作品恢复到 ${fmtTime(b.at)} 的样子？这之后写的内容会被替换掉（恢复前会自动备份一份现在的数据，反悔可以再恢复回来）。`)) return;
                       await useStore.getState().flushSaves();
                       try {
                         await bk.restoreAll(b.name, setStep);
@@ -366,7 +382,7 @@ export function TrashPanel() {
   return (
     <div className="panel">
       <h3>回收站</h3>
-      <p className="legend">删掉的书、章、场景在这里留 30 天，之后结账时彻底删除。</p>
+      <p className="legend">删掉的书、章、场景在这里留 30 天，之后每日整理时彻底删除。</p>
       {!works.length && !items.length && <Empty>回收站是空的。</Empty>}
       <ul className="scan-list">
         {works.map((x) => (

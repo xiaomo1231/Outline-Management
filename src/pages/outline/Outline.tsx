@@ -8,6 +8,7 @@ import { EventActions, Events } from "./Events";
 import { Plan, PlanActions } from "./Plan";
 import { names } from "./ctx";
 import { Guide } from "../../components/Guide";
+import { RouteCard } from "../../components/RouteCard";
 
 export type Say = (node: ReactNode) => void;
 type Tab = "chars" | "tree" | "events" | "plan";
@@ -94,6 +95,34 @@ export default function Outline() {
         {tab === "events" && <EventActions mode={emode} setMode={setEmode} say={say} onSync={() => openSync("events")} />}
         {tab === "plan" && <PlanActions say={say} onSync={() => openSync("plan")} />}
       </div>
+      <RouteCard
+        go={{
+          intro: () => {
+            setTab("tree");
+            setTimeout(() => (document.querySelector('[aria-label="全书梗概"]') as HTMLElement | null)?.focus(), 50);
+          },
+          vol: () => {
+            setTab("tree");
+            setSel({ ch: null, s: -1, vol: vols[0]?.id ?? null });
+          },
+          chs: () => {
+            setTab("tree");
+            setSel({ ch: null, s: -1, vol: vols[0]?.id ?? null });
+            toast("在卷大纲下面点「AI 拆成逐章大纲」，或者自己逐章写");
+          },
+          scenes: () => {
+            setTab("tree");
+            setSel({ ch: vols[0]?.chapters[0]?.id ?? null, s: -1 });
+            setTimeout(() => (document.querySelector(".split input") as HTMLElement | null)?.focus(), 50);
+            toast("在「一句话拆成场景」里写一句这章发生什么");
+          },
+          sync: () => {
+            setTab("events");
+            openSync("events");
+          },
+          write: () => useStore.getState().go("write"),
+        }}
+      />
       <Guide id={"outline-" + tab} {...GUIDES[tab]} />
       <div className="grid-ol">
         <div>
@@ -143,6 +172,8 @@ function SyncPanel({ focus, done }: { focus: Tab; done: (n: ReactNode) => void }
   const order: SyncSec[] = focus === "events" ? ["A", "B", "C", "D"] : focus === "plan" ? ["C", "D", "A", "B"] : ["B", "A", "D", "C"];
 
   function run() {
+    const big = items.find((i) => i.key === "C3");
+    if (big && on.C3 && !confirm(`你勾了「${big.lab}」。\n这会在大纲最后一卷一次性加很多空章（只有章号和阶段，没有内容），目录会变得很长。\n确定要建吗？不想要的话，取消后把这一项的勾去掉。`)) return;
     const picked: SyncItem[] = [];
     for (const k of RUN_ORDER) for (const it of items) if (it.sec === k && on[it.key]) picked.push(it);
     const nm = names();
@@ -187,11 +218,12 @@ function SyncPanel({ focus, done }: { focus: Tab; done: (n: ReactNode) => void }
               <small>{SEC[k][1]}</small>
             </div>
             {its.map((p) => (
-              <label className="sy-i" key={p.key}>
+              <label className={"sy-i" + (p.key === "C3" ? " sy-warn" : "")} key={p.key}>
                 <input type="checkbox" checked={!!on[p.key]} onChange={(e) => setOn({ ...on, [p.key]: e.target.checked })} />
                 <span>
                   {p.lab}
                   {p.why && <small>{p.why}</small>}
+                  {p.key === "C3" && <small className="warn-t">⚠ 会一次性新建很多空章，一般用不到；只有想先把整本的章号排出来时才勾。</small>}
                 </span>
               </label>
             ))}

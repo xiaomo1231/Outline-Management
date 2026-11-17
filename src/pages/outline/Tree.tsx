@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, applyVolumeSplit, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
-import { phaseName } from "../../lib/plan";
+import { allChapters, applyVolumeSplit, dayLabel, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
+import { phaseName, where } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
-import { uid } from "../../lib/util";
+import { cnNum, uid } from "../../lib/util";
+import { useSetting } from "../../lib/hooks";
 import { AsyncButton, Empty, Field, Issue } from "../../components/ui";
 import type { Say } from "./Outline";
 import type { Scene } from "../../lib/types";
@@ -100,7 +101,12 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   const edit = useStore((s) => s.edit);
   const [drag, setDrag] = useState<{ k: "c" | "s"; id: string; s?: number } | null>(null);
   const [split, setSplit] = useState("");
+  const [fold, setFold] = useSetting<Record<string, number>>("treeFold", {});
+  const work = useStore((s) => s.work);
+  const saveWorkInfo = useStore((s) => s.saveWorkInfo);
   const D = mode === "detail";
+  const allFolded = vols.length > 0 && vols.every((v) => fold[v.id]);
+  const toggle = (id: string) => setFold({ ...fold, [id]: fold[id] ? 0 : 1 });
   const chs = allChapters(vols);
   const cur = chs.find((r) => r.ch.id === sel.ch) ?? chs[0];
 
@@ -116,6 +122,12 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
         const [item] = d[from.v].chapters.splice(from.c, 1);
         const tc = d[to.v].chapters.findIndex((c) => c.id === to.ch.id);
         d[to.v].chapters.splice(tc, 0, item);
+        // 有篇幅规划时，拖过去的章按新位置更新所属阶段
+        if (plan.length && item.pl) {
+          const no = allChapters(d as any).find((r) => r.ch.id === item.id)?.no;
+          const w = no ? where(plan, no) : null;
+          if (w) item.pl = w;
+        }
       } else {
         const [s] = d[from.v].chapters[from.c].scenes.splice(drag.s!, 1);
         const arr = d[to.v].chapters.find((c) => c.id === to.ch.id)!.scenes;
@@ -132,6 +144,16 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
     <div className="split">
       <div>
         <div className="panel" style={{ marginBottom: 12 }}>
+          <h3>全书梗概</h3>
+          <textarea
+            rows={3}
+            value={work?.intro ?? ""}
+            placeholder="这本书讲什么：主角是谁、想要什么、最大的阻碍、大致结局。AI 每次都会看到这段。"
+            aria-label="全书梗概"
+            onChange={(e) => saveWorkInfo({ intro: e.target.value })}
+          />
+        </div>
+        <div className="panel" style={{ marginBottom: 12 }}>
           <h3>一句话拆成场景</h3>
           <div className="addrow" style={{ marginTop: 0 }}>
             <input value={split} placeholder="例如：主角第二次上天台，老人教他看见“多出来的东西”，但不肯说自己是谁" onChange={(e) => setSplit(e.target.value)} />
@@ -142,6 +164,8 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                   const scenes = await T.splitScenes(ctx(), split, cur);
                   useStore.getState().aiEdit(`拆场景：${split.slice(0, 12)}`, ["vols", "events"], (d) => {
                     const ch = d.vols[cur.v].chapters[cur.c];
+                    // 这句话就是本章大纲，本章还没写大纲时顺手存进去
+                    if (!ch.ol?.trim()) ch.ol = split.trim();
                     const add = scenes.map((s) => ({ ...s, id: uid("s") }));
                     ch.scenes.push(...add);
                     const r = allChapters(d.vols as any).find((x) => x.ch.id === ch.id)!;
@@ -166,9 +190,17 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
           <div className="legend">拆出的场景放进当前选中的章{cur ? `（第${cur.no}章）` : ""}。</div>
         </div>
         <div className="tree">
+          <div className="tree-acts">
+            <button className="btn sm" type="button" onClick={() => setFold(allFolded ? {} : Object.fromEntries([...vols.map((v) => [v.id, 1]), ...chs.map((r) => [r.ch.id, 1])]))}>
+              {allFolded ? "全部展开" : "全部折叠"}
+            </button>
+          </div>
           {vols.map((v, vi) => (
             <div className="vol" key={v.id}>
               <h4>
+                <button type="button" className="fold" aria-expanded={!fold[v.id]} title={fold[v.id] ? "展开这一卷" : "收起这一卷"} onClick={() => toggle(v.id)}>
+                  {fold[v.id] ? "▸" : "▾"}
+                </button>
                 <input className="vol-name" value={v.title} aria-label="卷名" onChange={(e) => edit("vols", (d) => void (d[vi].title = e.target.value))} />
                 <button className={"btn vol-ol" + (sel.vol === v.id ? " on" : "")} type="button" onClick={() => setSel({ ch: null, s: -1, vol: v.id })} title="写这一卷的完整大纲，再逐章细分">
                   卷大纲{v.outline?.trim() ? "" : "（未写）"}
@@ -180,7 +212,12 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                   {v.outline.trim().length > 80 ? "……" : ""}
                 </div>
               )}
-              {chs
+              {fold[v.id] ? (
+                <div className="vol-sum" onClick={() => toggle(v.id)}>
+                  已收起 · {v.chapters.length} 章，点这里展开
+                </div>
+              ) : null}
+              {!fold[v.id] && chs
                 .filter((r) => r.v === vi)
                 .map((r) => {
                   const on = sel.ch === r.ch.id && sel.s < 0;
@@ -204,9 +241,15 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                       onDragEnd={() => setDrag(null)}
                     >
                       <div className="cht" onClick={() => setSel({ ch: r.ch.id, s: -1 })}>
-                        <span className="grip" aria-hidden="true">
-                          ⋮⋮
-                        </span>
+                        {r.ch.scenes.length > 0 ? (
+                          <button type="button" className="fold" aria-expanded={!fold[r.ch.id]} title={fold[r.ch.id] ? "展开场景" : "收起场景"} onClick={(e) => { e.stopPropagation(); toggle(r.ch.id); }}>
+                            {fold[r.ch.id] ? "▸" : "▾"}
+                          </button>
+                        ) : (
+                          <span className="grip" aria-hidden="true">
+                            ⋮⋮
+                          </span>
+                        )}
                         <b>
                           第{r.no}章 {r.ch.title || "（未命名）"}
                         </b>
@@ -217,7 +260,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                       </div>
                       {r.ch.ol?.trim() && <div className="fn">{r.ch.ol.trim().slice(0, 60)}{r.ch.ol.trim().length > 60 ? "……" : ""}</div>}
                       {D && r.ch.fn && <div className="fn">作用：{r.ch.fn}</div>}
-                      {r.ch.scenes.length > 0 && (
+                      {r.ch.scenes.length > 0 && !fold[r.ch.id] && (
                         <ul className="scs">
                           {r.ch.scenes.map((s, si) => (
                             <li
@@ -241,9 +284,10 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                               </span>
                               <span className="sct">
                                 {s.t}
+                                {!D && s.day != null && <small>{dayLabel(s.day)}</small>}
                                 {D && (
                                   <small>
-                                    {s.day ? `第 ${s.day} 天${s.time ? " " + s.time : ""}` : "时间未定"}
+                                    {dayLabel(s.day)}{s.day != null && s.time ? " " + s.time : ""}
                                     {s.pov ? ` · ${s.pov}视角` : ""}
                                     {s.place ? ` · ${s.place}` : ""}
                                   </small>
@@ -267,7 +311,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                     </div>
                   );
                 })}
-              <button
+              {!fold[v.id] && <button
                 className="btn addch"
                 type="button"
                 onClick={() => {
@@ -277,10 +321,10 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                 }}
               >
                 ＋ 加一章
-              </button>
+              </button>}
             </div>
           ))}
-          <button className="btn addch" type="button" onClick={() => edit("vols", (d) => void d.push({ id: uid("v"), title: `第${d.length + 1}卷`, chapters: [] }))}>
+          <button className="btn addch" type="button" onClick={() => edit("vols", (d) => void d.push({ id: uid("v"), title: `第${cnNum(d.length + 1)}卷`, chapters: [] }))}>
             ＋ 加一卷
           </button>
         </div>
@@ -313,7 +357,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
       // 已关联的事件保持一致
       if ((SHARE as readonly string[]).includes(k as string) && sc.ev) {
         const e = d.events.find((x) => x.id === sc.ev) as any;
-        if (e) e[k] = k === "day" ? v || 1 : v;
+        if (e) e[k] = k === "day" ? v ?? 1 : v;
       }
     });
   const plOpts: [string, string][] = [["", "未归属"]];
@@ -394,6 +438,22 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               ))}
               {!nm.length && <span className="src">先到「人物」里加人物</span>}
             </div>
+            {s.who.filter((n) => n && !nm.includes(n)).length > 0 && (
+              <div className="addrow" style={{ marginTop: 4 }}>
+                <span className="src">这些人还不在人物表里：{s.who.filter((n) => n && !nm.includes(n)).join("、")}</span>
+                <button
+                  className="btn sm"
+                  type="button"
+                  onClick={() => {
+                    const add = s.who.filter((n) => n && !nm.includes(n));
+                    edit("chars", (d) => void d.push(...add.map((name) => ({ id: uid("p"), role: "配角", name, f: {} }))));
+                    toast(`已加进人物表：${add.join("、")}，到「人物」页补设定`);
+                  }}
+                >
+                  一键加进人物
+                </button>
+              </div>
+            )}
           </Field>
           {D && (
             <>
@@ -406,7 +466,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               </Field>
               <Field label="故事时间">
                 <div className="two">
-                  第<input type="number" min={0} value={s.day ?? ""} onChange={(e) => setSc("day", num(e.target.value))} aria-label="第几天" />天
+                  第<input type="number" value={s.day ?? ""} onChange={(e) => setSc("day", num(e.target.value))} aria-label="第几天" />天
                   <input value={s.time ?? ""} placeholder="时刻，如 23:40" onChange={(e) => setSc("time", e.target.value)} aria-label="时刻" />
                 </div>
               </Field>
@@ -442,7 +502,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
             {ev ? (
               <>
                 <span>
-                  已关联时间线：<b>{ev.t}</b>（第 {ev.day} 天）
+                  已关联时间线：<b>{ev.t}</b>（{dayLabel(ev.day)}）<small className="src"> · 标题、故事时间、时刻、地点、结果、信息揭示两边自动同步</small>
                 </span>
                 <button className="btn" type="button" onClick={() => goEvent(ev.id)}>在时间线中查看</button>
               </>
@@ -488,9 +548,11 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               className="btn"
               type="button"
               onClick={() => {
-                trashScene(useStore.getState().work!.id, r.v, r.c, sel.s);
+                const linked = s.ev && useStore.getState().events.find((x) => x.id === s.ev);
+                const drop = !!linked && confirm(`这个场景关联了时间线上的事件「${linked.t}」。\n要把事件也一起删掉吗？\n\n选「确定」一起删；选「取消」只删场景，事件留在时间线上。`);
+                trashScene(useStore.getState().work!.id, r.v, r.c, sel.s, drop);
                 setSel({ ch: r.ch.id, s: -1 });
-                toast("场景已放进回收站，时间线上的事件保留");
+                toast(drop ? "场景已放进回收站，时间线上的事件也删了" : linked ? "场景已放进回收站，时间线上的事件保留" : "场景已放进回收站");
               }}
             >
               删除场景
@@ -511,12 +573,12 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
   const [n, setN] = useState<number>(v.plan || Math.max(chs.length, 6));
   const [tl, setTl] = useState(true);
   const [quick, setQuick] = useState<string | null>(null);
-  const setV = (k: "outline" | "plan", val: any) => edit("vols", (d) => void ((d[vi] as any)[k] = val));
+  const setV = (k: "outline" | "plan" | "goal" | "climax" | "hook" | "words", val: any) => edit("vols", (d) => void ((d[vi] as any)[k] = val));
   const setOl = (c: number, k: "title" | "ol", val: string) => edit("vols", (d) => void ((d[vi].chapters[c] as any)[k] = val));
 
   return (
     <div className="panel det">
-      <h3>卷大纲 · {v.title || `第${vi + 1}卷`}</h3>
+      <h3>卷大纲 · {v.title || `第${cnNum(vi + 1)}卷`}</h3>
       <Field label="整卷走向" hint="这一卷（或接下来几章）从哪里开始、经过哪些转折、到哪里结束。写多写少都行">
         <textarea
           rows={8}
@@ -525,6 +587,20 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
           onChange={(e) => setV("outline", e.target.value)}
         />
       </Field>
+      <div className="vol-meta">
+        <Field label="本卷目标" hint="这一卷结束时主角要得到或失去什么">
+          <input value={v.goal ?? ""} onChange={(e) => setV("goal", e.target.value)} />
+        </Field>
+        <Field label="本卷高潮" hint="最燃 / 最虐的那一场">
+          <input value={v.climax ?? ""} onChange={(e) => setV("climax", e.target.value)} />
+        </Field>
+        <Field label="卷末钩子" hint="让读者追下一卷的悬念">
+          <input value={v.hook ?? ""} onChange={(e) => setV("hook", e.target.value)} />
+        </Field>
+        <Field label="计划字数" hint={`已写的章 ${chs.length} 章`}>
+          <input type="number" min={0} step={10000} value={v.words ?? ""} placeholder="例如 300000" onChange={(e) => setV("words", e.target.value === "" ? null : +e.target.value)} />
+        </Field>
+      </div>
       <div className="addrow" style={{ marginTop: 4, flexWrap: "wrap" }}>
         <label className="legend" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
           拆成

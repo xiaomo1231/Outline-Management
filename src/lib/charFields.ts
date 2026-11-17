@@ -30,7 +30,7 @@ export const SIMPLE: [string, string][] = [
   ["first", "首次出场"],
 ];
 
-export const ROLES = ["男主", "女主", "男一", "男二", "女一", "女二", "反派", "导师", "配角", "自定义"];
+export const ROLES = ["主角", "男主", "女主", "男一", "男二", "女一", "女二", "反派", "导师", "配角", "自定义"];
 
 const ALL = new Map<string, FieldDef>();
 for (const g of GROUPS) for (const f of g.fields) ALL.set(f.k, f);

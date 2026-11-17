@@ -19,7 +19,7 @@ export const NATURAL = `写法要求：
 - 句子长短要有变化，允许不完整的句子和口语。
 - 不要替作者推进大纲以外的剧情，不要新增设定。`;
 
-/** 常驻页：有模型班整理过的就用它，没有就现场拼一份 */
+/** 核心摘要：有AI 整理整理过的就用它，没有就现场拼一份 */
 export async function resident(c: Ctx): Promise<string> {
   const r = await mem.getResident(c.work.id);
   if (r) return r.text;
@@ -29,7 +29,7 @@ export async function resident(c: Ctx): Promise<string> {
 
 /** 系统提示的稳定前缀 */
 export async function stablePrefix(c: Ctx, role: string): Promise<string> {
-  return `${role}\n\n=== 常驻页（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
+  return `${role}\n\n=== 核心摘要（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
 }
 
 /** 作者的禁用清单，所有任务都带上 */
@@ -92,7 +92,7 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
   }
   const vol = c.vols[r.v];
   if (vol?.outline?.trim()) {
-    parts.push(`=== 本卷大纲（${vol.title}）===\n` + vol.outline.trim());
+    parts.push(`=== 本卷大纲（${vol.title}）===\n` + vol.outline.trim() + [vol.goal && "\n本卷目标：" + vol.goal, vol.climax && "\n本卷高潮：" + vol.climax, vol.hook && "\n卷末钩子：" + vol.hook].filter(Boolean).join(""));
     refs.push("卷大纲");
   }
   if (r.ch.pl) parts.push(`本章在篇幅规划里属于：${phaseName(c.plan, r.ch.pl)}${c.plan[r.ch.pl.a]?.ph[r.ch.pl.p]?.g ? "，这一阶段的目标：" + c.plan[r.ch.pl.a].ph[r.ch.pl.p].g : ""}`);
@@ -102,7 +102,7 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
 export function outlineOf(_c: Ctx, r: ChRef): string {
   const lines = [`第${r.no}章 ${r.ch.title || "（未命名）"}${r.ch.ol ? "｜本章大纲：" + r.ch.ol : ""}${r.ch.fn ? "｜本章作用：" + r.ch.fn : ""}${r.ch.hook ? "｜章末钩子：" + r.ch.hook : ""}`];
   r.ch.scenes.forEach((s, i) => {
-    const bits = [s.goal && "目标：" + s.goal, s.conf && "冲突：" + s.conf, s.turn && "转折：" + s.turn, s.result && "结果：" + s.result, s.who.length && "人物：" + s.who.join("、"), s.pov && "视角：" + s.pov, s.place && "地点：" + s.place, s.day && `故事时间：第${s.day}天${s.time ? " " + s.time : ""}`, s.plant && "埋伏笔：" + s.plant, s.pay && "收伏笔：" + s.pay, s.reveal && "信息揭示：" + s.reveal, (s.moodA || s.moodB) && `情绪：${s.moodA || "?"}→${s.moodB || "?"}`, s.pace && "节奏：" + s.pace, s.words && `约 ${s.words} 字`].filter(Boolean);
+    const bits = [s.goal && "目标：" + s.goal, s.conf && "冲突：" + s.conf, s.turn && "转折：" + s.turn, s.result && "结果：" + s.result, s.who.length && "人物：" + s.who.join("、"), s.pov && "视角：" + s.pov, s.place && "地点：" + s.place, s.day != null && `故事时间：第${s.day}天${s.time ? " " + s.time : ""}`, s.plant && "埋伏笔：" + s.plant, s.pay && "收伏笔：" + s.pay, s.reveal && "信息揭示：" + s.reveal, (s.moodA || s.moodB) && `情绪：${s.moodA || "?"}→${s.moodB || "?"}`, s.pace && "节奏：" + s.pace, s.words && `约 ${s.words} 字`].filter(Boolean);
     lines.push(`场景${i + 1}「${s.t}」${bits.join("；")}`);
   });
   return lines.join("\n");

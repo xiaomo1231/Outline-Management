@@ -52,7 +52,13 @@ export function newChapter(title = ""): Chapter {
 }
 
 /** 场景和事件共享、互相保持一致的字段 */
-export const SHARE = ["day", "time", "place", "result", "reveal"] as const;
+export const SHARE = ["t", "day", "time", "place", "result", "reveal"] as const;
+
+/** 故事时间的写法：0 和负数是开篇之前（前史） */
+export function dayLabel(d: number | null | undefined): string {
+  if (d == null) return "时间未定";
+  return d > 0 ? `第 ${d} 天` : d === 0 ? "第 0 天（开篇前）" : `开篇前 ${-d} 天`;
+}
 
 export function link(s: Scene, e: StoryEvent) {
   s.ev = e.id;
@@ -74,20 +80,20 @@ export function guessDay(vols: Volume[], r: ChRef): number {
   return dayGuess(vols, r).day;
 }
 export function dayGuess(vols: Volume[], r: ChRef): { day: number; sure: boolean } {
-  const own = r.ch.scenes.map((s) => s.day).filter((d): d is number => !!d);
+  const own = r.ch.scenes.map((s) => s.day).filter((d): d is number => d != null);
   if (own.length) return { day: Math.max(...own), sure: true };
   let at: { no: number; day: number } | null = null;
   for (const x of allChapters(vols)) {
     if (x.no >= r.no) break;
-    const ds = x.ch.scenes.map((s) => s.day).filter((d): d is number => !!d);
+    const ds = x.ch.scenes.map((s) => s.day).filter((d): d is number => d != null);
     if (ds.length) at = { no: x.no, day: Math.max(...ds) };
   }
   return at ? { day: at.day + (r.no - at.no), sure: false } : { day: r.no, sure: false };
 }
 
 /** 没有场景的章，用章名和本章大纲在时间线上记一条事件 */
-export function chapterToEvent(vols: Volume[], events: StoryEvent[], r: ChRef): StoryEvent {
-  const e: StoryEvent = { id: uid("e"), day: guessDay(vols, r), ch: r.ch.id, t: r.ch.title || `第${r.no}章`, who: "", ty: "main", process: r.ch.ol || "", from: "大纲（整章）" };
+export function chapterToEvent(vols: Volume[], events: StoryEvent[], r: ChRef, day?: number): StoryEvent {
+  const e: StoryEvent = { id: uid("e"), day: day ?? guessDay(vols, r), ch: r.ch.id, t: r.ch.title || `第${r.no}章`, who: "", ty: "main", process: r.ch.ol || "", from: "大纲（整章）" };
   events.push(e);
   return e;
 }
@@ -98,7 +104,7 @@ export function targetChapter(vols: Volume[], e: StoryEvent): { r: ChRef; why: s
   const x = e.ch && all.find((y) => y.ch.id === e.ch);
   if (x) return { r: x, why: "按事件表里填的章节" };
   let best: ChRef | null = null;
-  for (const y of all) if (y.ch.scenes.some((s) => s.day && s.day <= e.day)) best = y;
+  for (const y of all) if (y.ch.scenes.some((s) => s.day != null && s.day <= e.day)) best = y;
   return { r: best || all[all.length - 1], why: "没填章节，按故事时间推断" };
 }
 
@@ -114,9 +120,9 @@ export function eventToOutline(vols: Volume[], e: StoryEvent, names: string[]): 
 }
 
 /** 场景 → 时间线：新建事件并关联 */
-export function sceneToEvent(vols: Volume[], events: StoryEvent[], s: Scene, r: ChRef): StoryEvent {
-  const e: StoryEvent = { id: uid("e"), day: s.day || guessDay(vols, r), time: s.time || "", ch: r.ch.id, t: s.t, who: s.who.join("、"), ty: s.pay ? "pay" : s.plant ? "plant" : "main", fore: s.pay || s.plant || "", place: s.place || "", result: s.result || "", reveal: s.reveal || "", from: "大纲" };
-  if (!s.day) s.day = e.day;
+export function sceneToEvent(vols: Volume[], events: StoryEvent[], s: Scene, r: ChRef, day?: number): StoryEvent {
+  const e: StoryEvent = { id: uid("e"), day: s.day ?? day ?? guessDay(vols, r), time: s.time || "", ch: r.ch.id, t: s.t, who: s.who.join("、"), ty: s.pay ? "pay" : s.plant ? "plant" : "main", fore: s.pay || s.plant || "", place: s.place || "", result: s.result || "", reveal: s.reveal || "", from: "大纲" };
+  if (s.day == null) s.day = e.day;
   events.push(e);
   link(s, e);
   return e;
@@ -173,14 +179,18 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
     const t = targetChapter(d.vols, e);
     if (!t) continue;
     const id = e.id;
-    items.push({ key: "A" + id, sec: "A", on: true, lab: `「${e.t}」→ ${chapterFull(t.r)}，新建场景`, why: t.why, run: (x, names) => { const ev = x.events.find((y) => y.id === id); if (ev && !ev.sc) eventToOutline(x.vols, ev, names); } });
+    const pre = e.day <= 0;
+    const hid = e.ty === "hidden";
+    items.push({ key: "A" + id, sec: "A", on: !pre && !hid, lab: `「${e.t}」→ ${chapterFull(t.r)}，新建场景`, why: hid ? "这是暗线/幕后事件，读者看不到，一般不写成场景，默认不勾" : pre ? "这是开篇之前的前史，一般不单独写成场景，默认不勾" : t.why, run: (x, names) => { const ev = x.events.find((y) => y.id === id); if (ev && !ev.sc) eventToOutline(x.vols, ev, names); } });
   }
   for (const r of all)
     for (const s of r.ch.scenes) {
       if (s.ev) continue;
       const sid = s.id;
       const g = dayGuess(d.vols, r);
-      items.push({ key: "B" + sid, sec: "B", on: !!s.day || g.sure, lab: `「${s.t}」→ 第 ${s.day || g.day} 天，新建事件`, why: s.day ? "故事时间取自场景" : g.sure ? "场景没填故事时间，取本章其他场景的" : "没填故事时间，暂按章节顺序推断（一章算一天），确认后再勾", run: (x) => { const f = findScene(x.vols, sid); if (f && !f.s.ev) sceneToEvent(x.vols, x.events, f.s, f.r); } });
+      const day = s.day ?? g.day;
+      // 预览里显示的天数就是执行时用的天数
+      items.push({ key: "B" + sid, sec: "B", on: s.day != null || g.sure, lab: `「${s.t}」→ ${dayLabel(day)}，新建事件`, why: s.day != null ? "故事时间取自场景" : g.sure ? "场景没填故事时间，取本章其他场景的" : "没填故事时间，暂按章节顺序推断（一章算一天），确认后再勾", run: (x) => { const f = findScene(x.vols, sid); if (f && !f.s.ev) sceneToEvent(x.vols, x.events, f.s, f.r, day); } });
     }
   // 还没有场景、但写了章名或本章大纲的章，整章记一条事件
   for (const r of all) {
@@ -188,7 +198,7 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
     if (d.events.some((e) => e.ch === r.ch.id)) continue;
     const cid = r.ch.id;
     const g = dayGuess(d.vols, r);
-    items.push({ key: "BC" + cid, sec: "B", on: true, lab: `第${r.no}章「${r.ch.title || "（未命名）"}」整章 → 第 ${g.day} 天，新建事件`, why: "这一章还没有场景，用章名和本章大纲记一条；天数按章节顺序推断，进时间线后可以改", run: (x) => { const f = allChapters(x.vols).find((y) => y.ch.id === cid); if (f && !x.events.some((e) => e.ch === cid)) chapterToEvent(x.vols, x.events, f); } });
+    items.push({ key: "BC" + cid, sec: "B", on: true, lab: `第${r.no}章「${r.ch.title || "（未命名）"}」整章 → ${dayLabel(g.day)}，新建事件`, why: "这一章还没有场景，用章名和本章大纲记一条；天数按章节顺序推断，进时间线后可以改", run: (x) => { const f = allChapters(x.vols).find((y) => y.ch.id === cid); if (f && !x.events.some((e) => e.ch === cid)) chapterToEvent(x.vols, x.events, f, g.day); } });
   }
   if (!d.plan.length) return { items, notes };
 

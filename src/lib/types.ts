@@ -69,9 +69,14 @@ export interface Volume {
   outline?: string;
   /** 打算写几章，AI 拆章时用 */
   plan?: number | null;
+  /** 本卷目标、高潮、卷末钩子、计划字数 */
+  goal?: string;
+  climax?: string;
+  hook?: string;
+  words?: number | null;
 }
 
-export type EventType = "main" | "side" | "plant" | "pay";
+export type EventType = "main" | "side" | "plant" | "pay" | "hidden";
 
 export interface StoryEvent {
   id: Id;
@@ -93,6 +98,8 @@ export interface StoryEvent {
   reveal?: string;
   note?: string;
   sc?: Id;
+  /** 读者在哪一章得知（倒叙、揭秘时和发生的章不同） */
+  know?: Id | null;
   from?: string;
   ai?: boolean;
 }
@@ -151,7 +158,7 @@ export interface Character {
   mut?: Record<string, FieldMut>;
 }
 
-/** 锁定：正文和 AI 都不能改，写出变化会报冲突；随剧情变化：结账时按正文自动记变化 */
+/** 锁定：正文和 AI 都不能改，写出变化会报冲突；随剧情变化：每日整理时按正文自动记变化 */
 export type FieldMut = "lock" | "dyn";
 
 /** 称呼表：A 叫 B 什么 */

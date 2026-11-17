@@ -145,13 +145,13 @@ export async function checkContinuity(c: Ctx, r: ChRef, text: string): Promise<C
     [
       sys(await stablePrefix(c, "你是严格的连载校对。只指出确实和前文、设定矛盾的地方，不挑文笔，不评价剧情好坏。")),
       user(`检查第${r.no}章正文有没有和已有内容矛盾。人物性格另有检查，这里只看：
-1. 设定：世界观、能力体系、物品、地名、组织，和作品圣经或常驻页冲突的。
+1. 设定：世界观、能力体系、物品、地名、组织，和设定集或核心摘要冲突的。
 2. 时间线：和前几章、本章时间线事件对不上的时间、地点、先后顺序。
 3. 前文：和前几章已经发生的事冲突，例如已死的人出场、已用掉的东西又出现、重复交代。
 4. 伏笔：提前揭开还没到时候的伏笔，或者收了没埋过的伏笔。
 5. 禁用清单：写了作者禁用的词、套路或剧情走向。
 
-作品圣经：
+设定集：
 ${clip(bible.text || "（还没有）", 6000)}
 
 前几章：
@@ -166,7 +166,7 @@ ${outlineOf(c, r)}
 正文：
 ${text.slice(0, 30000)}
 
-返回 JSON：{"issues":[{"lv":"r|y|g","kind":"设定|时间线|前文|伏笔|禁用","quote":"原文引用","conflict":"和什么冲突","src":"出处，例如作品圣经/第3章","suggestion":"一句修改建议"}]}
+返回 JSON：{"issues":[{"lv":"r|y|g","kind":"设定|时间线|前文|伏笔|禁用","quote":"原文引用","conflict":"和什么冲突","src":"出处，例如设定集/第3章","suggestion":"一句修改建议"}]}
 r 是确定矛盾，y 是可能矛盾，g 是提醒。没有问题就返回 {"issues":[]}`),
     ],
     { model: "write", temperature: 0.2 },
@@ -307,7 +307,7 @@ ${text.slice(0, 30000)}
 已经记录的事件（不要重复）：${known.join("；") || "无"}
 上一章大致在故事第 ${Math.max(1, ...c.events.filter((e) => e.ch && allChapters(c.vols).find((x) => x.ch.id === e.ch && x.no < r.no)).map((e) => e.day))} 天。
 
-返回 JSON：{"events":[{"day":第几天,"time":"时刻，可空","t":"一句话事件","who":"人物，用顿号分隔","ty":"main|side|plant|pay","place":"地点","fore":"如果是伏笔，写伏笔名"}]}`),
+返回 JSON：{"events":[{"day":第几天,"time":"时刻，可空","t":"一句话事件","who":"人物，用顿号分隔","ty":"main|side|plant|pay|hidden（hidden 是读者暂时看不到的暗线、幕后发生的事）","place":"地点","fore":"如果是伏笔，写伏笔名"}]}`),
     ],
     { temperature: 0.3 },
   );
