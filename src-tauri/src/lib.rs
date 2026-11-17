@@ -1,6 +1,8 @@
 //! 墨枢的原生层只做几件事：注册插件、保证只开一个窗口、把 API 密钥存进系统凭据管理器、提供数据库文件路径。
 //! 业务逻辑都在前端 TypeScript 里。
 
+mod update;
+
 use tauri::Manager;
 
 const SERVICE: &str = "moshu";
@@ -33,6 +35,7 @@ fn secret_set(name: String, value: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    update::cleanup();
     tauri::Builder::default()
         // 必须第一个注册：再次启动时不开新窗口，只把已开的窗口叫到前台。
         // 两个窗口同时写一个数据库会互相覆盖。
@@ -48,7 +51,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![secret_get, secret_set])
+        .invoke_handler(tauri::generate_handler![secret_get, secret_set, update::update_kind, update::update_download, update::update_install])
         .run(tauri::generate_context!())
         .expect("墨枢启动失败");
 }
