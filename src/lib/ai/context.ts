@@ -92,7 +92,7 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
   }
   const vol = c.vols[r.v];
   if (vol?.outline?.trim()) {
-    parts.push(`=== 本卷大纲（${vol.title}）===\n` + vol.outline.trim());
+    parts.push(`=== 本卷大纲（${vol.title}）===\n` + vol.outline.trim() + [vol.goal && "\n本卷目标：" + vol.goal, vol.climax && "\n本卷高潮：" + vol.climax, vol.hook && "\n卷末钩子：" + vol.hook].filter(Boolean).join(""));
     refs.push("卷大纲");
   }
   if (r.ch.pl) parts.push(`本章在篇幅规划里属于：${phaseName(c.plan, r.ch.pl)}${c.plan[r.ch.pl.a]?.ph[r.ch.pl.p]?.g ? "，这一阶段的目标：" + c.plan[r.ch.pl.a].ph[r.ch.pl.p].g : ""}`);

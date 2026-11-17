@@ -529,3 +529,7 @@ table.keys td:first-child{white-space:nowrap;width:1%}
 .md hr{border:0;border-top:1px solid var(--line);margin:8px 0}
 .msg-t .md:last-child p:last-child{margin-bottom:0}
 .msg.ai .msg-t{white-space:normal}
+.tree-acts{display:flex;justify-content:flex-end;margin-bottom:6px}
+.tree .fold,.cht .fold{background:none;border:0;padding:0 4px;color:var(--muted);cursor:pointer;font-size:12px}
+.vol-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 12px}
+.vol-meta input{width:100%}

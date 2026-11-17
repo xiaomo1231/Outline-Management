@@ -69,6 +69,11 @@ export interface Volume {
   outline?: string;
   /** 打算写几章，AI 拆章时用 */
   plan?: number | null;
+  /** 本卷目标、高潮、卷末钩子、计划字数 */
+  goal?: string;
+  climax?: string;
+  hook?: string;
+  words?: number | null;
 }
 
 export type EventType = "main" | "side" | "plant" | "pay";
