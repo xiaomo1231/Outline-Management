@@ -147,3 +147,26 @@ describe("版本号", () => {
     expect(compareVersions("v1.0.0-beta", "1.0.0")).toBe(0);
   });
 });
+
+import { fieldMode, isLocked } from "../charFields";
+import { ruleCheck } from "../chars";
+import type { Character, Volume } from "../types";
+describe("锁定 / 随剧情变化", () => {
+  it("默认：外貌锁定，衣着随剧情变化，没标的字段可变，隐藏项单独处理", () => {
+    expect(fieldMode({}, "look")).toBe("lock");
+    expect(fieldMode({}, "clothes")).toBe("dyn");
+    expect(fieldMode({}, "gender")).toBe("dyn");
+    expect(fieldMode({}, "secret")).toBe("hid");
+  });
+  it("作者可以按人物改", () => {
+    expect(isLocked({ mut: { look: "dyn" } }, "look")).toBe(false);
+    expect(isLocked({ mut: { gender: "lock" } }, "gender")).toBe(true);
+  });
+  it("外貌改成随剧情变化后，正文写了变化不再报矛盾", () => {
+    const vols: Volume[] = [{ id: "v", title: "卷", chapters: [{ id: "c1", title: "", status: "已写", scenes: [] }] }];
+    const c: Character = { id: "a", role: "女主", name: "江晚", f: { look: "左脸有疤" } };
+    const text = "江晚抬手摸了摸右脸。";
+    expect(ruleCheck(text, [c], [], vols, 1).length).toBe(1);
+    expect(ruleCheck(text, [{ ...c, mut: { look: "dyn" } }], [], vols, 1).length).toBe(0);
+  });
+});

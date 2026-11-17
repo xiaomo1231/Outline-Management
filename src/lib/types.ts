@@ -141,7 +141,12 @@ export interface Character {
   knows?: { secret: string; ch: Id | null }[];
   /** 状态：死亡后出场会报错 */
   dead?: Id | null;
+  /** 作者为单个字段改的「锁定 / 随剧情变化」，不填就用字段默认 */
+  mut?: Record<string, FieldMut>;
 }
+
+/** 锁定：正文和 AI 都不能改，写出变化会报冲突；随剧情变化：结账时按正文自动记变化 */
+export type FieldMut = "lock" | "dyn";
 
 /** 称呼表：A 叫 B 什么 */
 export interface CallEntry {

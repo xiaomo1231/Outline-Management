@@ -5,7 +5,7 @@ import { useStore } from "../store";
 import * as repo from "../repo";
 import * as mem from "../memory";
 import { allChapters } from "../outline";
-import { fieldDef, fieldLabel } from "../charFields";
+import { fieldLabel, isLocked } from "../charFields";
 import { compileStyle } from "../style";
 import { today, uid } from "../util";
 import type { CharChange } from "../types";
@@ -56,7 +56,7 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
         for (const x of d.changes ?? []) {
           const p = dr.chars.find((y) => y.name === x.name);
           if (!p || !x.field || !x.to) continue;
-          const lock = fieldDef(x.field)?.flag === "lock";
+          const lock = isLocked(p, x.field);
           const cc: CharChange = { id: uid("cc"), ch: r.ch.id, field: x.field, from: p.f[x.field] || "", to: x.to, cause: x.cause, quote: x.quote, by: "ai", at: now, status: lock ? "conflict" : "applied" };
           (p.changes ??= []).push(cc);
           if (lock) conflicts.push(`${p.name}的${fieldLabel(x.field)}`);

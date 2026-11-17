@@ -1,4 +1,5 @@
 import groups from "./charFields.json";
+import type { Character, FieldMut } from "./types";
 
 export type FieldFlag = "lock" | "hid" | "dyn";
 export interface FieldDef {
@@ -21,7 +22,7 @@ export const GROUPS = groups as FieldGroup[];
 export const SIMPLE: [string, string][] = [
   ["tag", "一句话人设"],
   ["id", "身份"],
-  ["look", "外貌（锁定）"],
+  ["look", "外貌"],
   ["core", "性格核心"],
   ["want", "动机"],
   ["voice", "说话方式"],
@@ -36,6 +37,20 @@ for (const g of GROUPS) for (const f of g.fields) ALL.set(f.k, f);
 export function fieldDef(k: string): FieldDef | undefined {
   return ALL.get(k);
 }
+/**
+ * 这个人物的这个字段现在是锁定还是随剧情变化。
+ * 可隐藏字段另有揭示计划，返回 "hid"；没标过的字段默认随剧情变化。
+ */
+export function fieldMode(c: Pick<Character, "mut"> | undefined, k: string): FieldMut | "hid" {
+  const d = ALL.get(k);
+  if (d?.flag === "hid") return "hid";
+  return c?.mut?.[k] ?? (d?.flag === "lock" ? "lock" : "dyn");
+}
+
+export function isLocked(c: Pick<Character, "mut"> | undefined, k: string): boolean {
+  return fieldMode(c, k) === "lock";
+}
+
 export function fieldLabel(k: string): string {
   return ALL.get(k)?.label ?? SIMPLE.find((x) => x[0] === k)?.[1] ?? k;
 }
