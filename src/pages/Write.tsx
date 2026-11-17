@@ -315,9 +315,10 @@ export default function Write() {
     if (!editor || !loadedFor.current) return;
     const id = loadedFor.current;
     const snap = snapOf(editor);
+    // 先留这一版再写库，免得自动快照抢先存了同样的内容
+    const ok = await snapshot(work.id, id, snap, reason);
     if (save.pending()) await save.flush(id, editor);
     else await saveNow(id, snap);
-    const ok = await snapshot(work.id, id, snap, reason);
     toast(ok ? "已存一版，可以在「历史」里找到" : "已保存（和上一版一样，没有重复存）");
     if (panel.kind === "hist") setPanel({ kind: "hist", list: await repo.listVersions(id), sel: null });
   }

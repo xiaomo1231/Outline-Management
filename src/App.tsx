@@ -225,7 +225,7 @@ function DayReport({ work }: { work: string }) {
       const y = days.find((d) => d.day < today());
       if (!y && !h.lastScript) {
         setLines([
-          `欢迎！今天的目标是 ${s.work?.goal.toLocaleString()} 字，左上角会实时显示进度。`,
+          `欢迎！今天的目标是 ${s.work?.goal.toLocaleString()} 字，写作页底栏会实时显示进度。`,
           "写的内容每隔几秒自动保存，不用手动点保存。",
           "不知道从哪开始？先去「大纲」写一句话梗概，或者直接在这里开写。",
         ]);
