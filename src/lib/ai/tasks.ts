@@ -396,12 +396,17 @@ ${NO_REPEAT}
 }
 
 export const SEL_OPS: Record<string, string> = {
-  续写: "接着这段往下写一段（150–300 字），衔接自然。",
-  扩写: "把这段扩写到原来的一倍半到两倍，补动作、细节和对白，不改情节。",
-  改写: "换一种写法重写这段，意思不变。",
-  润色: "只做轻度润色：理顺不通的句子、去掉重复和套话，保留作者的用词习惯。改动越少越好。",
-  改对白口吻: "只改对白，让每个人说话更符合他的人设和说话方式，叙述部分不动。",
+  续写: "从「原文」的最后一句接着往下写一段（150–300 字），衔接自然。只输出新写的部分，不要复述原文。",
+  扩写: "把「原文」扩写到原来的一倍半到两倍：按原文的顺序，逐句保留原文的情节、人物、对白和关键句子，只在句子之间补动作、神态、细节和心理。不新增情节，不改变谁说了什么、做了什么。",
+  改写: "换一种写法重写「原文」，情节、人物、对白的意思和先后顺序都不变。",
+  润色: "只对「原文」做轻度润色：理顺不通的句子、去掉重复和套话，保留作者的用词习惯。改动越少越好。",
+  改对白口吻: "只改「原文」里的对白，让每个人说话更符合他的人设和说话方式，叙述部分一字不动。",
 };
+
+/** 扩写、改写这类“改原文”的操作：结果必须还是这一段 */
+const KEEP_RULE = `忠于原文的硬性要求：
+- 结果必须是对「原文」这一段的处理，读者一看就能对上原文的每个情节和每句对白。
+- 「前文」「后文」只用来对齐语气、人物关系和已发生的事实，不能把它们的内容写进结果，也不能写原文之外的新情节。`;
 
 /** 作者给这次续写、扩写等的额外要求；不填就按上下文和大纲来 */
 export function noteLine(note?: string): string {
@@ -409,14 +414,31 @@ export function noteLine(note?: string): string {
   return n ? `作者对这一次的要求（风格、走向等），优先照着做，但不能违反本书写作限制：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
 }
 
+function selPrompt(ctxText: string, op: string, sel: string, before: string, after: string, note?: string): string {
+  const cont = op === "续写";
+  return `${ctxText}
+
+=== ${cont ? "本章已经写好的正文" : "本章前文（仅供参考，不要写进结果）"} ===
+${writtenSoFar(before)}
+${after.trim() ? `\n=== 后文（仅供参考：已经写好的，${cont ? "续写不要写到它的情节里去，也不要重复" : "不要写进结果"}）===\n${after.slice(0, 800)}\n` : ""}
+任务：${SEL_OPS[op] ?? op}
+${noteLine(note)}
+
+${cont ? NO_REPEAT : KEEP_RULE}
+
+=== 原文（${cont ? "从这段最后一句接着写" : "要处理的就是这一段"}）===
+${sel}
+=== 原文结束 ===`;
+}
+
 export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string, after = ""): Promise<string> {
   const ctx = r ? await chapterContext(c, r) : { text: "" };
   const res = await chat(
     [
       sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。", "prose", atOf(c, r))) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-      user(`${ctx.text}\n\n本章前文：\n${writtenSoFar(before)}\n\n要处理的段落：\n${sel}${after.trim() ? `\n\n这段后面已经写好的正文（不要提前写掉，也不要重复）：\n${after.slice(0, 800)}` : ""}\n\n任务：${SEL_OPS[op] ?? op}\n${noteLine(note)}\n\n${NO_REPEAT}${limitsReminder(c, "prose", atOf(c, r))}`),
+      user(selPrompt(ctx.text, op, sel, before, after, note) + limitsReminder(c, "prose", atOf(c, r))),
     ],
-    { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : 1.0 },
+    { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : op === "续写" ? 1.0 : 0.8 },
   );
   return res.content.trim();
 }
