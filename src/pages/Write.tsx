@@ -4,7 +4,11 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { AiEdit, AiText, AiTracker, AI_META, aiChars } from "../components/aiMarks";
-import { ScanHighlight, scanKey, setBanWords } from "../components/scanDeco";
+import { ScanHighlight, scanKey, setLimitScan } from "../components/scanDeco";
+import { AiResult, BanModal, NoteConflicts, marked } from "../components/LimitBits";
+import { scanLimits, splitLimitNote, type LimitHit, type ScanOpts } from "../lib/limits";
+import { namesOf } from "../lib/mention";
+import type { WriteLimit } from "../lib/types";
 import { KeepCaret } from "../components/keepCaret";
 import { SelectionUi, keepSelKey } from "../components/selectionUi";
 import { Guide } from "../components/Guide";
@@ -15,7 +19,7 @@ import { loadInto, publishText, setDoc } from "../lib/editorText";
 import * as repo from "../lib/repo";
 import { allChapters, findChapter, newChapter, plants } from "../lib/outline";
 import { countWords, debounce, fmtHM, fmtTime, htmlToText, today, uid } from "../lib/util";
-import { scan, sentenceLengths, parseBans } from "../lib/aiscan";
+import { scan, sentenceLengths } from "../lib/aiscan";
 import { EDITOR_DEFAULT, useSetting, type EditorPrefs } from "../lib/hooks";
 import { importFont, loadSavedFonts, SYSTEM_FONTS } from "../lib/fonts";
 import { ruleCheck } from "../lib/chars";
@@ -24,13 +28,25 @@ import { countIn, findInDoc, replaceInHtml, snippets } from "../lib/findReplace"
 import { ExportPanel } from "./DataPanels";
 import * as T from "../lib/ai/tasks";
 import { errText } from "../lib/ai/client";
-import type { Ctx } from "../lib/ai/context";
+import { atOf, type Ctx } from "../lib/ai/context";
 import { phaseName } from "../lib/plan";
 import * as arc from "../lib/ai/archive";
 
-function ctx(): Ctx {
+/** skip：这一次暂时关掉的写作限制 */
+function ctx(skip: string[] = []): Ctx {
   const s = useStore.getState();
-  return { work: s.work!, vols: s.vols, chars: s.chars, events: s.events, plan: s.plan, style: s.style, calls: s.calls, changesets: s.changesets };
+  const style = skip.length ? { ...s.style, limits: (s.style.limits ?? []).filter((l) => !skip.includes(l.id)) } : s.style;
+  return { work: s.work!, vols: s.vols, chars: s.chars, events: s.events, plan: s.plan, style, calls: s.calls, changesets: s.changesets };
+}
+
+/** 改写作限制（例外词、新词）：作者的修改，不进 AI 变更集 */
+function setLimits(v: WriteLimit[]) {
+  useStore.getState().edit("style", (d) => void (d.limits = v as any));
+}
+function addExcept(id: string, word: string) {
+  const ls = useStore.getState().style.limits ?? [];
+  setLimits(ls.map((l) => (l.id === id ? { ...l, except: [...new Set([...l.except, word])] } : l)));
+  toast(`「${word}」以后不算违反这条限制`);
 }
 
 /** 编辑器当前内容 */
@@ -68,7 +84,7 @@ function aiParas(text: string) {
 type Panel =
   | { kind: "none" }
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
-  | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string; note: string }
+  | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string; note: string; skip: string[] }
   | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
@@ -89,6 +105,8 @@ export default function Write() {
   const [prefs, setPrefs, prefsReady] = useSetting<EditorPrefs>("editor", EDITOR_DEFAULT);
   const [focus, setFocus] = useState(false);
   const [scanOn, setScanOn] = useState(false);
+  /** 右键「以后别这样写」选中的文字 */
+  const [ban, setBan] = useState<string | null>(null);
   /** 选中文字后右键弹出的 AI 菜单 */
   const [menu, setMenu] = useState<{ x: number; y: number; sel: boolean } | null>(null);
   const [words, setWords] = useState<Record<string, number>>({});
@@ -130,8 +148,13 @@ export default function Write() {
     });
   }, [work.id]);
 
-  const bans = useMemo(() => parseBans(style.bans).words, [style.bans]);
-  useEffect(() => setBanWords(bans), [bans]);
+  // 写作限制：本章在哪一卷、有哪些人物、谁的视角，用来认对白归属和筛选限制
+  const limits = useMemo(() => style.limits ?? [], [style.limits]);
+  const scanOpts = useMemo<ScanOpts>(() => {
+    const r = findChapter(vols, chapterId) ?? allChapters(vols)[0];
+    const povs = [...new Set((r?.ch.scenes ?? []).map((s) => s.pov).filter(Boolean))] as string[];
+    return { at: atOf({ vols, chars }, r), people: chars.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), names: namesOf(c) })), pov: povs.length === 1 ? povs[0] : undefined };
+  }, [vols, chars, chapterId]);
 
   const extra = (kind: "pasted" | "ai", n: number) => {
     if (!n) return;
@@ -176,6 +199,12 @@ export default function Write() {
       if (at && at.ch.status === "大纲" && ed.getText().trim().length >= 20) st.edit("vols", (d) => void (d[at.v].chapters[at.c].status = "写作中"));
     },
   });
+
+  // 编辑器里的写作限制高亮：限制或本章人物变了就重算
+  useEffect(() => {
+    setLimitScan((text) => scanLimits(text, limits, scanOpts).hits.map((h) => ({ ...h, title: "写作限制：" + (limits.find((l) => l.id === h.id)?.text ?? "") + (h.unsure ? "（在对白里，认不出是谁说的，你来判断）" : "") })));
+    if (editor && scanOn) editor.view.dispatch(editor.state.tr.setMeta(scanKey, true));
+  }, [editor, limits, scanOpts, scanOn]);
 
   // 切换章节：先存上一章，再加载
   useEffect(() => {
@@ -339,7 +368,8 @@ export default function Write() {
     if (editor && loadedFor.current) snapshot(work.id, loadedFor.current, snapOf(editor), "AI 修改前").catch(() => {});
   }
 
-  function insertInline(text: string) {
+  function insertInline(raw: string) {
+    const text = splitLimitNote(raw).body;
     beforeAi();
     extra("ai", countWords(text));
     editor
@@ -355,7 +385,7 @@ export default function Write() {
     toast("已插入。浅黄底是 AI 写的，你改过以后会变成虚线");
   }
 
-  async function selOp(op: string, note = "", range?: { from: number; to: number }) {
+  async function selOp(op: string, note = "", range?: { from: number; to: number }, skip: string[] = []) {
     if (!editor || !cur) return;
     let { from, to } = range ?? editor.state.selection;
     // 续写不用先选中：取光标所在的这一段（光标在空行就取上一段）
@@ -370,9 +400,9 @@ export default function Write() {
     }
     abort.current?.abort();
     abort.current = new AbortController();
-    setPanel({ kind: "sel", op, from, to, text: "", done: false, note });
+    setPanel({ kind: "sel", op, from, to, text: "", done: false, note, skip });
     try {
-      await T.selectionOp(ctx(), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
+      await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true, err: errText(e) } : p));
@@ -384,9 +414,10 @@ export default function Write() {
     beforeAi();
     // 替换时按改动算：只改了几个词，就只有这几个词算 AI
     const orig = editor.state.doc.textBetween(panel.from, panel.to, "\n");
-    const d = mode === "replace" ? diffParas(orig, panel.text) : null;
-    extra("ai", d ? d.added : countWords(panel.text));
-    const content = d ? d.content : aiParas(panel.text);
+    const body = splitLimitNote(panel.text).body;
+    const d = mode === "replace" ? diffParas(orig, body) : null;
+    extra("ai", d ? d.added : countWords(body));
+    const content = d ? d.content : aiParas(body);
     const chain = editor.chain().focus().command(({ tr }) => {
       tr.setMeta(AI_META, true);
       return true;
@@ -430,8 +461,9 @@ export default function Write() {
   function applyFill(mode: "end" | "replace") {
     if (panel.kind !== "fill" || !editor) return;
     beforeAi();
-    extra("ai", countWords(panel.text));
-    const content = aiParas(panel.text);
+    const body = splitLimitNote(panel.text).body;
+    extra("ai", countWords(body));
+    const content = aiParas(body);
     const chain = editor.chain().focus().command(({ tr }) => {
       tr.setMeta(AI_META, true);
       return true;
@@ -440,6 +472,14 @@ export default function Write() {
     else chain.insertContentAt(editor.state.doc.content.size, content).run();
     setPanel({ kind: "none" });
     toast("草稿已进正文，浅黄底的都是 AI 写的");
+  }
+
+  /** 「只改这几处」：只把违反限制的句子交给 AI 改，改好后替换面板里的文字 */
+  async function fixPanel(body: string, hits: LimitHit[]) {
+    const skip = panel.kind === "sel" ? panel.skip : [];
+    const fixed = await T.fixLimits(ctx(skip), body, hits);
+    setPanel((p) => (p.kind === "sel" || p.kind === "fill" ? { ...p, text: fixed } : p));
+    toast("只改了违反限制的句子，其余没动");
   }
 
   async function check() {
@@ -488,7 +528,9 @@ export default function Write() {
 
   const total = Object.values(words).reduce((a, b) => a + b, 0);
   const chWords = countWords(plain);
-  const scanRows = scanOn ? scan(plain, bans) : [];
+  const scanRows = scanOn ? scan(plain) : [];
+  const limStats = scanOn ? scanLimits(plain, limits, scanOpts).stats : [];
+  const limOn = limits.filter((l) => !l.off).length;
   const rhythm = sentenceLengths(plain).slice(-80);
   const maxR = Math.max(10, ...rhythm);
   const olWho = mentioned(chars, plain + "\n" + (cur.ch.ol ?? ""));
@@ -621,7 +663,18 @@ export default function Write() {
                 editor?.view.dispatch(editor.state.tr.setMeta(scanKey, v));
               }}
             >
-              {scanOn ? "关闭套话高亮" : "扫描 AI 腔"}
+              {scanOn ? "关闭扫描高亮" : "扫描 AI 腔和限制"}
+            </button>
+            <button
+              className="btn hide-focus lim-badge"
+              type="button"
+              title="本书的写作限制：AI 在所有任务里遵守，写完自动检查。点这里去设置"
+              onClick={() => {
+                useStore.setState({ styleTab: "limits" });
+                useStore.getState().go("style");
+              }}
+            >
+              限制 {limOn}
             </button>
             <span className="sep hide-focus" />
             <select className="btn hide-focus" value="" aria-label="AI 处理选中的文字" onChange={(e) => e.target.value && selOp(e.target.value)}>
@@ -702,9 +755,17 @@ export default function Write() {
                   // 关掉菜单后把焦点和原来的选区还给正文
                   editor?.commands.focus(null, { scrollIntoView: false });
                 }}
-                run={(op, note) => {
+                run={(op, note, skip) => {
                   setMenu(null);
-                  selOp(op, note);
+                  selOp(op, note, undefined, skip);
+                }}
+                limits={limits}
+                ban={() => {
+                  setMenu(null);
+                  if (!editor) return;
+                  const { from, to } = editor.state.selection;
+                  const t = editor.state.doc.textBetween(from, to, "\n").trim();
+                  if (t) setBan(t);
                 }}
                 next={() => {
                   setMenu(null);
@@ -725,6 +786,22 @@ export default function Write() {
               />
             )}
           </article>
+          {ban !== null && (
+            <BanModal
+              sel={ban}
+              limits={limits}
+              close={() => setBan(null)}
+              save={(v, msg) => {
+                setLimits(v);
+                setBan(null);
+                if (!scanOn) {
+                  setScanOn(true);
+                  editor?.view.dispatch(editor.state.tr.setMeta(scanKey, true));
+                }
+                toast(msg + "。正文里同样的写法已标出");
+              }}
+            />
+          )}
 
           <div className="status" aria-live="polite">
             <SaveState saving={saving} savedAt={savedAt} err={saveErr} retry={() => useStore.getState().flushSaves()} />
@@ -785,7 +862,7 @@ export default function Write() {
               </button>
             </div>
           ) : (
-            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} redoSel={(note) => panel.kind === "sel" && selOp(panel.op, note, { from: panel.from, to: panel.to })} />
+            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} redoSel={(note, skip) => panel.kind === "sel" && selOp(panel.op, note, { from: panel.from, to: panel.to }, skip)} limits={limits} scanOpts={scanOpts} fix={fixPanel} checkLim={async (text) => (cur ? T.checkLimits(ctx(), cur, splitLimitNote(text).body) : [])} />
           )}
 
           <div className="panel">
@@ -864,6 +941,14 @@ export default function Write() {
                     <span>{r.n} 处</span>
                   </li>
                 )) : <li className="empty">没有发现常见套话。</li>}
+                {limStats.filter((r) => r.n > 0).map((r) => (
+                  <li key={r.limit.id} title={r.words.join("、") + (r.exempt ? `；人物例外 ${r.exempt} 处没算` : "") + (r.unsure ? `；${r.unsure} 处认不出是谁说的` : "")}>
+                    <span>限制：{r.limit.text}</span>
+                    <span style={r.over ? undefined : { color: "var(--muted)" }}>
+                      {r.n} 处{r.limit.level === "less" ? ` / 上限 ${r.allowed}` : ""}
+                    </span>
+                  </li>
+                ))}
               </ul>
             )}
           </div>
@@ -873,19 +958,23 @@ export default function Write() {
   );
 }
 
-function RedoNote({ note, redo }: { note: string; redo: (n: string) => void }) {
+function RedoNote({ note, skip: skip0, redo, limits }: { note: string; skip: string[]; redo: (n: string, skip: string[]) => void; limits: WriteLimit[] }) {
   const [v, setV] = useState(note);
+  const [skip, setSkip] = useState(skip0);
   return (
-    <div className="addrow" style={{ marginTop: 6 }}>
-      <input value={v} placeholder="不满意？写个要求再来一次（可选）" aria-label="重新生成的要求" onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && redo(v)} />
-      <button className="btn" type="button" onClick={() => redo(v)}>
-        重新生成
-      </button>
-    </div>
+    <>
+      <div className="addrow" style={{ marginTop: 6 }}>
+        <input value={v} placeholder="不满意？写个要求再来一次（可选）" aria-label="重新生成的要求" onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && redo(v, skip)} />
+        <button className="btn" type="button" onClick={() => redo(v, skip)}>
+          重新生成
+        </button>
+      </div>
+      <NoteConflicts note={v} limits={limits} skip={skip} setSkip={setSkip} />
+    </>
   );
 }
 
-function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop, redoSel }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void; redoSel: (note: string) => void }) {
+function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop, redoSel, limits, scanOpts, fix, checkLim }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void; redoSel: (note: string, skip: string[]) => void; limits: WriteLimit[]; scanOpts: ScanOpts; fix: (body: string, hits: LimitHit[]) => Promise<void>; checkLim: (text: string) => Promise<T.ContIssue[]> }) {
   if (panel.kind === "none" || panel.kind === "hist" || panel.kind === "find" || panel.kind === "keys" || panel.kind === "export") return null;
   const close = (
     <button className="x" type="button" aria-label="关闭" onClick={() => setPanel({ kind: "none" })}>
@@ -901,12 +990,19 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         </h3>
         {panel.loading && <Empty>正在想……</Empty>}
         {panel.err && <p className="lint bad">{panel.err}</p>}
-        {panel.opts.map((o, i) => (
-          <button key={i} className="opt" type="button" onClick={() => insertInline(o.t)}>
-            {o.t}
-            <small>{o.d}</small>
-          </button>
-        ))}
+        {panel.opts.map((o, i) => {
+          const body = splitLimitNote(o.t).body;
+          const r = scanLimits(body, limits, scanOpts);
+          return (
+            <button key={i} className="opt" type="button" onClick={() => insertInline(body)}>
+              {marked(body, r.hits, limits)}
+              <small>
+                {o.d}
+                {r.hits.length > 0 && <span className="chip warn">违反限制：{[...new Set(r.hits.map((h) => h.word))].join("、")}</span>}
+              </small>
+            </button>
+          );
+        })}
       </div>
     );
   if (panel.kind === "sel")
@@ -916,9 +1012,9 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           <span>AI {panel.op}{panel.done ? " · 已生成" : " · 生成中"}</span>
           {close}
         </h3>
-        <div className="ai-text">{panel.text || (panel.done ? "" : "正在写……")}</div>
+        <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} skip={panel.skip} empty={panel.done ? "" : "正在写……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
-        {panel.done && <RedoNote note={panel.note} redo={(n) => redoSel(n)} />}
+        {panel.done && <RedoNote note={panel.note} skip={panel.skip} redo={redoSel} limits={limits} />}
         <div className="addrow">
           {!panel.done && (
             <button className="btn" type="button" onClick={stop}>
@@ -945,8 +1041,9 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           <span>草稿区{panel.scene ? ` · ${panel.done ? "已生成" : "正在写"}「${panel.scene}」` : panel.done ? " · 已生成" : ""}</span>
           {close}
         </h3>
-        <div className="ai-text">{panel.text || (panel.done ? "" : "正在组装上下文……")}</div>
+        <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} empty={panel.done ? "" : "正在组装上下文……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
+        {panel.done && panel.text && limits.some((l) => !l.off) && <LimCheckBtn text={panel.text} run={checkLim} />}
         <div className="addrow">
           {!panel.done && (
             <button className="btn" type="button" onClick={stop}>
@@ -1024,8 +1121,41 @@ function continueRange(doc: import("@tiptap/pm/model").Node, pos: number): { fro
   return found;
 }
 
-function SelMenu({ at, close, run, copy, next }: { at: { x: number; y: number; sel: boolean }; close: () => void; run: (op: string, note: string) => void; copy: (cut: boolean) => void; next: () => void }) {
+/** 整章草稿生成后，让 AI 再查一遍词表查不出的限制（情节、人物、尺度） */
+function LimCheckBtn({ text, run }: { text: string; run: (t: string) => Promise<T.ContIssue[]> }) {
+  const [res, setRes] = useState<T.ContIssue[] | null>(null);
+  const [err, setErr] = useState("");
+  return (
+    <div className="lim-check">
+      <AsyncButton
+        title="词表只能查词。情节走向、人物言行这类要 AI 读一遍，会多一次调用"
+        onClick={async () => {
+          setErr("");
+          try {
+            setRes(await run(text));
+          } catch (e) {
+            setErr(errText(e));
+          }
+        }}
+      >
+        让 AI 再查一遍限制（情节、人物）
+      </AsyncButton>
+      {err && <p className="lint bad">{err}</p>}
+      {res && !res.length && <p className="lim-check ok">✓ AI 没发现违反写作限制的情节和言行</p>}
+      {res?.map((x, i) => (
+        <Issue key={i} lv={x.lv}>
+          {x.conflict && <b>{x.conflict} </b>}
+          {x.suggestion}
+          {x.quote && <div className="src">原文：{x.quote}</div>}
+        </Issue>
+      ))}
+    </div>
+  );
+}
+
+function SelMenu({ at, close, run, copy, next, ban, limits }: { at: { x: number; y: number; sel: boolean }; close: () => void; run: (op: string, note: string, skip: string[]) => void; copy: (cut: boolean) => void; next: () => void; ban: () => void; limits: WriteLimit[] }) {
   const [note, setNote] = useState("");
+  const [skip, setSkip] = useState<string[]>([]);
   useEffect(() => {
     const off = () => close();
     window.addEventListener("scroll", off, true);
@@ -1052,10 +1182,11 @@ function SelMenu({ at, close, run, copy, next }: { at: { x: number; y: number; s
             if (e.key === "Escape") close();
           }}
         />
+        <NoteConflicts note={note} limits={limits} skip={skip} setSkip={setSkip} />
         {Object.keys(T.SEL_OPS)
           .filter((k) => at.sel || k === "续写")
           .map((k) => (
-            <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note)}>
+            <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note, skip)}>
               {k}
             </button>
           ))}
@@ -1067,6 +1198,9 @@ function SelMenu({ at, close, run, copy, next }: { at: { x: number; y: number; s
         {at.sel && (
           <>
             <hr />
+            <button type="button" role="menuitem" className="lim-item" title="把选中的字加进写作限制，以后 AI 不这样写，写了会标出来" onClick={ban}>
+              以后别这样写…
+            </button>
             <button type="button" role="menuitem" onClick={() => copy(false)}>
               复制 <kbd>Ctrl+C</kbd>
             </button>

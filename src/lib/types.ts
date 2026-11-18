@@ -220,6 +220,49 @@ export interface StyleMetrics {
   endDialog: number | null;
   endShort: number | null;
 }
+export type LimitType = "用词语感" | "内容尺度" | "情节走向" | "人物言行" | "格式标点";
+/** never 绝不出现；brief 一笔带过（只交代结果）；less 尽量少用（超过上限才算违反） */
+export type LimitLevel = "never" | "brief" | "less";
+
+export interface LimitWho {
+  mode: "all" | "except" | "only";
+  /** 人物的正式名字 */
+  names: string[];
+  /** 管到哪：只管对白，还是对白加他视角的叙述 */
+  span: "dialog" | "pov";
+  /** 除了这些人时，他们用的力度（不填就是完全不限制） */
+  level?: LimitLevel;
+}
+
+/** 作者给这本书定的一条写作限制：AI 在所有任务里遵守，生成后用词表检查 */
+export interface WriteLimit {
+  id: Id;
+  /** 作者自己的话，例如「不要文绉绉的词」 */
+  text: string;
+  type: LimitType;
+  level: LimitLevel;
+  /** 尽量少用：每千字最多几次 */
+  cap?: number;
+  /** 帮 AI 理解是哪一类，顿号分隔 */
+  examples?: string;
+  /** 想要的写法：告诉 AI 改成什么 */
+  want?: string;
+  /** 检查词表：生成后本地扫描 */
+  words: string[];
+  /** 例外词：作者点过「这个不算」的 */
+  except: string[];
+  /** 对谁生效：默认所有人；except 除了这些人（放宽），only 只管这些人（收紧） */
+  who?: LimitWho;
+  /** 只在这几卷生效（卷 id），空是全书 */
+  vols?: Id[];
+  /** 暂停：保留但不生效 */
+  off?: boolean;
+  /** 来自哪个预设 */
+  preset?: string;
+  /** 从旧禁用清单转来的 */
+  fromOld?: boolean;
+}
+
 export interface StyleSetup {
   core: Id | null;
   sub: Id[];
@@ -228,8 +271,10 @@ export interface StyleSetup {
   rules: string;
   /** 作者的样章，原文保留 */
   samples: string;
-  /** 禁用清单：一行一条，词、套路或剧情走向，所有 AI 任务都不许写 */
+  /** 旧的禁用清单：一行一条。已经转成 limits，留着只为能回退，不再写进提示词 */
   bans?: string;
+  /** 本书的写作限制。undefined 表示还没从旧禁用清单迁移过 */
+  limits?: WriteLimit[];
   /** 本作品自建的风格块 */
   blocks: StyleBlock[];
 }

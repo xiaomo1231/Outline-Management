@@ -3,6 +3,7 @@ import { produce, type Draft } from "immer";
 import * as repo from "./repo";
 import type { Arc, CallEntry, ChangeSet, Character, DocKind, StoryEvent, StyleSetup, Volume, Work } from "./types";
 import { emptySetup } from "./style";
+import { ensureLimits } from "./limits";
 import { uid } from "./util";
 
 export type Page = "library" | "new" | "write" | "outline" | "style" | "memory" | "settings";
@@ -24,6 +25,8 @@ interface State extends WorkData {
   works: Work[];
   work: Work | null;
   page: Page;
+  /** 风格页打开时显示哪一栏：写作页点「限制」会直接跳到写作限制 */
+  styleTab: "style" | "limits";
   chapterId: string | null;
   toast: string | null;
   loadWorks(): Promise<void>;
@@ -103,6 +106,7 @@ export const useStore = create<State>((set, get) => ({
   works: [],
   work: null,
   page: "library",
+  styleTab: "style",
   chapterId: null,
   toast: null,
   saving: 0,
@@ -119,7 +123,8 @@ export const useStore = create<State>((set, get) => ({
     if (!w) return;
     const data: WorkData = { ...EMPTY };
     for (const k of Object.keys(KIND) as DataKey[]) (data as any)[k] = await repo.loadDoc(id, KIND[k], (EMPTY as any)[k]);
-    data.style = { ...emptySetup(), ...data.style };
+    // 旧的禁用清单第一次打开时转成写作限制
+    data.style = { ...emptySetup(), ...data.style, limits: ensureLimits(data.style?.limits, data.style?.bans) };
     const first = data.vols[0]?.chapters[0]?.id ?? null;
     const last = await repo.getSetting<string | null>("lastChapter:" + id, null);
     set({ ...data, work: w, page, chapterId: last ?? first });

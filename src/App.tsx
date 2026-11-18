@@ -22,7 +22,7 @@ const TABS: [Page, string, boolean][] = [
   ["library", "作品库", false],
   ["write", "写作", true],
   ["outline", "大纲", true],
-  ["style", "风格", true],
+  ["style", "风格与限制", true],
   ["memory", "记忆", true],
   ["settings", "设置", false],
 ];

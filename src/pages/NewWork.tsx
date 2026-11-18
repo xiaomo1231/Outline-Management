@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import LimitsPanel from "../components/LimitsPanel";
+import { copyForBook } from "../lib/limits";
+import type { WriteLimit } from "../lib/types";
 import { useStore } from "../lib/store";
 import StyleBuilder from "../components/StyleBuilder";
 import { emptySetup } from "../lib/style";
@@ -20,6 +23,10 @@ export default function NewWork() {
   const [keyOk, setKeyOk] = useState(true);
   const [chapWords, setChapWords] = useState(2500);
   const [style, setStyle] = useState<StyleSetup>(emptySetup());
+  // 新书默认带上「我的常用限制」，作者可以在最后一步取消
+  useEffect(() => {
+    repo.getSetting<WriteLimit[]>("limitTemplates", []).then((ls) => ls.length && setStyle((s) => (s.limits?.length ? s : { ...s, limits: ls.map(copyForBook) })));
+  }, []);
 
   const info = () => ({ name: name.trim() || "未命名作品", intro: intro.trim(), goal: Math.max(100, goal || 2000), chapWords: Math.max(500, chapWords || 2500) });
 
@@ -110,7 +117,7 @@ export default function NewWork() {
             <button className="btn" type="button" onClick={() => setStep(1)}>
               上一步
             </button>
-            <button className="btn" type="button" onClick={() => void toStep3(emptySetup())}>
+            <button className="btn" type="button" onClick={() => void toStep3({ ...emptySetup(), limits: style.limits })}>
               跳过，用默认风格
             </button>
             <button className="btn primary" type="button" onClick={() => void toStep3()}>
@@ -144,6 +151,12 @@ export default function NewWork() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {step === 3 && (
+        <div style={{ maxWidth: 760, marginTop: 16 }}>
+          <p className="muted" style={{ margin: "0 0 8px" }}>写作限制（可选）：这本书里不想让 AI 写的词、内容和情节。已经勾上了你的常用限制，以后在「风格与限制」页随时改。</p>
+          <LimitsPanel compact value={style.limits ?? []} names={[]} onChange={(v) => setStyle({ ...style, limits: v })} />
         </div>
       )}
     </section>

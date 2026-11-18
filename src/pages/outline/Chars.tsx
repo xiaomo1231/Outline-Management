@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
+import CharLimits from "../../components/CharLimits";
 import { GROUPS, ROLES, SIMPLE, fieldLabel, fieldMode } from "../../lib/charFields";
 import { completion, snapshot } from "../../lib/chars";
 import { allChapters, findChapter } from "../../lib/outline";
@@ -263,6 +264,16 @@ export function DetailChars({ say }: { say: Say }) {
             <a href="#g-timeline" onClick={(e) => (e.preventDefault(), document.getElementById("g-timeline")?.scrollIntoView({ behavior: "smooth" }))}>
               人设时间轴<i>{changes.length}</i>
             </a>
+          </div>
+        </div>
+
+        <div className="grp" id="g-limits">
+          <header>
+            <b>写作限制</b>
+            <span className="cnt">给这个人放宽或收紧，例如爱装腔的人可以说文绉绉的词</span>
+          </header>
+          <div style={{ padding: "10px 14px" }}>
+            <CharLimits name={c.name} />
           </div>
         </div>
 
