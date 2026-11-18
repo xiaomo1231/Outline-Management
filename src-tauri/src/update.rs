@@ -83,15 +83,27 @@ pub async fn update_download(app: AppHandle, url: String, name: String, sha256: 
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// cmd 的命令行：等约 2 秒（让当前进程先退出）再打开 exe。
+/// 整段用 /S /C "…" 包起来，cmd 只去掉最外面一对引号，里面的引号原样保留。
+fn relaunch_cmdline(exe: &std::path::Path) -> String {
+    format!("/S /C \"ping -n 3 127.0.0.1 >nul & start \"\" \"{}\"\"", exe.display())
+}
+
+/// 不能用 Command::args 传给 cmd：Rust 会把里面的引号转义成 \"，cmd 不认这种写法，
+/// start 收到的程序名就变成了 \\，弹出「Windows 找不到 '\\'」，新版也就没打开。
 #[cfg(windows)]
-fn detached(cmd: &mut std::process::Command) -> &mut std::process::Command {
+fn relaunch_later(exe: &std::path::Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
-    // DETACHED_PROCESS | CREATE_NO_WINDOW
-    cmd.creation_flags(0x0000_0008 | 0x0800_0000)
+    std::process::Command::new("cmd")
+        .raw_arg(relaunch_cmdline(exe))
+        // DETACHED_PROCESS | CREATE_NO_WINDOW
+        .creation_flags(0x0000_0008 | 0x0800_0000)
+        .spawn()
+        .map(|_| ())
 }
 #[cfg(not(windows))]
-fn detached(cmd: &mut std::process::Command) -> &mut std::process::Command {
-    cmd
+fn relaunch_later(_exe: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// 安装下载好的新版，然后退出墨枢。调用前前端已经保存并备份
@@ -115,8 +127,7 @@ pub fn update_install(app: AppHandle, path: String) -> Result<(), String> {
             return Err(format!("替换失败：{e}"));
         }
         // 等这个进程退出后再打开新版，否则会被「只开一个窗口」挡回来
-        let cmdline = format!("ping -n 3 127.0.0.1 >nul & start \"\" \"{}\"", me.display());
-        detached(std::process::Command::new("cmd").args(["/C", &cmdline])).spawn().map_err(|e| e.to_string())?;
+        relaunch_later(&me).map_err(|e| format!("新版已放好，但没能自动打开，请手动打开墨枢：{e}"))?;
     }
     app.exit(0);
     Ok(())
@@ -126,5 +137,16 @@ pub fn update_install(app: AppHandle, path: String) -> Result<(), String> {
 pub fn cleanup() {
     if let Ok(me) = exe() {
         let _ = std::fs::remove_file(me.with_extension("exe.old"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relaunch_cmdline_keeps_plain_quotes() {
+        let line = relaunch_cmdline(std::path::Path::new(r"D:\墨枢\墨枢.exe"));
+        assert_eq!(line, r#"/S /C "ping -n 3 127.0.0.1 >nul & start "" "D:\墨枢\墨枢.exe"""#);
     }
 }
