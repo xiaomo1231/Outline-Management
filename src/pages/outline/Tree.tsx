@@ -335,6 +335,24 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   );
 }
 
+/** 场景的「第几天」。已关联事件时清空只留在框里不写入（事件必须有天数），这样退格清空再重输不会接在原数字后面；离开输入框后回到实际天数 */
+function DayInput({ value, keep, set }: { value?: number | null; keep: boolean; set: (v: number | null) => void }) {
+  const [t, setT] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      value={t ?? value ?? ""}
+      onChange={(e) => {
+        const x = e.target.value;
+        setT(x);
+        if (x !== "" || !keep) set(x === "" ? null : +x);
+      }}
+      onBlur={() => setT(null)}
+      aria-label="第几天"
+    />
+  );
+}
+
 function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; sel: Sel; setSel: (s: Sel) => void; say: Say; goEvent: (id: string) => void }) {
   const vols = useStore((s) => s.vols);
   const events = useStore((s) => s.events);
@@ -499,7 +517,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
               </Field>
               <Field label="故事时间">
                 <div className="two">
-                  第<input type="number" value={s.day ?? ""} onChange={(e) => setSc("day", num(e.target.value))} aria-label="第几天" />天
+                  第<DayInput value={s.day} keep={!!s.ev} set={(v) => setSc("day", v)} />天
                   <input value={s.time ?? ""} placeholder="时刻，如 23:40" onChange={(e) => setSc("time", e.target.value)} aria-label="时刻" />
                 </div>
               </Field>
