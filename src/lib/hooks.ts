@@ -43,5 +43,21 @@ export interface MemPrefs {
   dailyAt: string;
   residentLimit: number;
   autoModel: boolean;
+  /** 设置版本：2 起核心摘要默认上限从 3000 调到 10000 */
+  rv?: number;
 }
-export const MEM_DEFAULT: MemPrefs = { dailyAt: "22:05", residentLimit: 3000, autoModel: false };
+export const RESIDENT_MIN = 1000;
+export const RESIDENT_MAX = 20000;
+export const MEM_DEFAULT: MemPrefs = { dailyAt: "22:05", residentLimit: 10000, autoModel: false, rv: 2 };
+
+/** 核心摘要上限，夹在允许范围里 */
+export function residentLimitOf(p: Partial<MemPrefs>): number {
+  const n = Math.round(Number(p.residentLimit) || MEM_DEFAULT.residentLimit);
+  return Math.min(RESIDENT_MAX, Math.max(RESIDENT_MIN, n));
+}
+
+/** 老设置里存的是旧默认值 3000（多半是改别的设置时顺带存下的），升到新默认 10000；作者自己改过的不动 */
+export function migrateMemPrefs(x: Partial<MemPrefs>): Partial<MemPrefs> | null {
+  if ((x.rv ?? 0) >= 2) return null;
+  return { ...x, residentLimit: x.residentLimit == null || x.residentLimit === 3000 ? 10000 : x.residentLimit, rv: 2 };
+}

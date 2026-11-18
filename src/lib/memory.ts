@@ -9,7 +9,7 @@ import { today, uid } from "./util";
 import { allChapters, plants } from "./outline";
 
 export const LAYER = ["", "近期", "中期", "早期", "归档"];
-export const RESIDENT_DEFAULT = 3000;
+export const RESIDENT_DEFAULT = 10000;
 
 export interface MemLogEntry {
   at: number;

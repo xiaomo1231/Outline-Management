@@ -10,6 +10,7 @@ import { phaseName } from "../plan";
 import { PATTERNS, parseBans } from "../aiscan";
 import { archiveMap } from "./archive";
 import { clip } from "../util";
+import { residentLimitOf, type MemPrefs } from "../hooks";
 
 export type Ctx = WorkData & { work: Work };
 
@@ -26,7 +27,8 @@ export async function resident(c: Ctx): Promise<string> {
   const r = await mem.getResident(c.work.id);
   if (r) return r.text;
   const facts = await mem.items(c.work.id, 1);
-  return mem.buildResident(c.work, c.chars, c.vols, c.events, compileStyle(c.style), facts);
+  const limit = residentLimitOf(await repo.getSetting<Partial<MemPrefs>>("memory", {}));
+  return mem.buildResident(c.work, c.chars, c.vols, c.events, compileStyle(c.style), facts, limit);
 }
 
 /** 系统提示的稳定前缀 */
