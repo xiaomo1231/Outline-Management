@@ -69,7 +69,7 @@ type Panel =
   | { kind: "none" }
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
   | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string; note: string }
-  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string }
+  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
   | { kind: "find"; replace: boolean }
@@ -303,11 +303,18 @@ export default function Write() {
     return editor.state.doc.textBetween(0, from, "\n");
   }
 
+  function after(pos?: number): string {
+    if (!editor) return "";
+    const end = editor.state.doc.content.size;
+    const at = Math.min(pos ?? editor.state.selection.to, end);
+    return editor.state.doc.textBetween(at, end, "\n");
+  }
+
   async function suggest() {
     if (!editor || !cur) return;
     setPanel({ kind: "sugg", loading: true, opts: [] });
     try {
-      const opts = await T.suggestNext(ctx(), cur, before());
+      const opts = await T.suggestNext(ctx(), cur, before(), after());
       setPanel({ kind: "sugg", loading: false, opts });
     } catch (e) {
       setPanel({ kind: "sugg", loading: false, opts: [], err: errText(e) });
@@ -365,7 +372,7 @@ export default function Write() {
     abort.current = new AbortController();
     setPanel({ kind: "sel", op, from, to, text: "", done: false, note });
     try {
-      await T.selectionOp(ctx(), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note);
+      await T.selectionOp(ctx(), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true, err: errText(e) } : p));
@@ -409,9 +416,11 @@ export default function Write() {
     }
     abort.current?.abort();
     abort.current = new AbortController();
-    setPanel({ kind: "fill", scene: "", text: "", done: false });
+    const existing = editor.getText({ blockSeparator: "\n" });
+    const cont = !!existing.trim();
+    setPanel({ kind: "fill", scene: "", text: "", done: false, cont });
     try {
-      await T.fillChapter(ctx(), cur, (_i, t) => setPanel((p) => (p.kind === "fill" ? { ...p, scene: t } : p)), (d) => setPanel((p) => (p.kind === "fill" ? { ...p, text: p.text + d } : p)), abort.current.signal);
+      await T.fillChapter(ctx(), cur, (_i, t) => setPanel((p) => (p.kind === "fill" ? { ...p, scene: t } : p)), (d) => setPanel((p) => (p.kind === "fill" ? { ...p, text: p.text + d } : p)), abort.current.signal, existing);
       setPanel((p) => (p.kind === "fill" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "fill" ? { ...p, done: true, err: errText(e) } : p));
@@ -949,13 +958,15 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
               <button className="btn primary" type="button" onClick={() => applyFill("end")}>
                 接到正文末尾
               </button>
-              <button className="btn" type="button" onClick={() => applyFill("replace")}>
-                替换整章
-              </button>
+              {!panel.cont && (
+                <button className="btn" type="button" onClick={() => applyFill("replace")}>
+                  替换整章
+                </button>
+              )}
             </>
           )}
         </div>
-        <div className="legend">草稿先放在这里，你确认后才进正文。进正文后浅黄底标出，生成后建议点右边的「一致性检查」。</div>
+        <div className="legend">{panel.cont ? "本章已经有正文，这次是接着正文结尾写大纲里还没写到的部分。想整章重写，先清空正文再生成。" : ""}草稿先放在这里，你确认后才进正文。进正文后浅黄底标出，生成后建议点右边的「一致性检查」。</div>
       </div>
     );
   return (

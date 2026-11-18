@@ -1,6 +1,6 @@
 // 各个 AI 功能的提示词和返回格式。界面拿到结果后用 aiEdit 写入，所以都能整组撤销。
 import { chat, chatJson, type Msg } from "./client";
-import { type Ctx, NATURAL, chapterContext, outlineOf, priorStory, stablePrefix } from "./context";
+import { type Ctx, NATURAL, NO_REPEAT, chapterContext, outlineOf, priorStory, stablePrefix, writtenSoFar } from "./context";
 import { GROUPS, fieldLabel, SIMPLE } from "../charFields";
 import type { Character, Scene, StoryEvent, StyleBlock, StyleDims } from "../types";
 import { allChapters, type ChRef } from "../outline";
@@ -371,7 +371,7 @@ ${allChapters(c.vols).filter((r) => r.ch.summary).map((r) => `第${r.no}章：${
 /* ---------- 正文 ---------- */
 
 /** Ctrl+Enter：给三个不同方向的下一句 */
-export async function suggestNext(c: Ctx, r: ChRef, before: string): Promise<{ t: string; d: string }[]> {
+export async function suggestNext(c: Ctx, r: ChRef, before: string, after = ""): Promise<{ t: string; d: string }[]> {
   const ctx = await chapterContext(c, r);
   const res = await chatJson<{ options: { t: string; d: string }[] }>(
     [
@@ -381,8 +381,10 @@ export async function suggestNext(c: Ctx, r: ChRef, before: string): Promise<{ t
 本章大纲：
 ${outlineOf(c, r)}
 
-光标前的正文：
-${before.slice(-1500)}
+本章已经写好的正文（光标前）：
+${writtenSoFar(before)}
+${after.trim() ? "\n光标后面已经写好的正文（不要写到它前面去重复）：\n" + after.slice(0, 800) + "\n" : ""}
+${NO_REPEAT}
 
 给三个接下来的写法，每个一到两句，紧接光标处。d 写这个方向的思路（不超过 15 字）。
 返回 JSON：{"options":[{"t":"正文","d":"方向"}]}`),
@@ -406,12 +408,12 @@ export function noteLine(note?: string): string {
   return n ? `作者对这一次的要求（风格、走向等），优先照着做：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
 }
 
-export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string): Promise<string> {
+export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string, after = ""): Promise<string> {
   const ctx = r ? await chapterContext(c, r) : { text: "" };
   const res = await chat(
     [
       sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。")) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-      user(`${ctx.text}\n\n前文：\n${before.slice(-1200)}\n\n要处理的段落：\n${sel}\n\n任务：${SEL_OPS[op] ?? op}\n${noteLine(note)}`),
+      user(`${ctx.text}\n\n本章前文：\n${writtenSoFar(before)}\n\n要处理的段落：\n${sel}${after.trim() ? `\n\n这段后面已经写好的正文（不要提前写掉，也不要重复）：\n${after.slice(0, 800)}` : ""}\n\n任务：${SEL_OPS[op] ?? op}\n${noteLine(note)}\n\n${NO_REPEAT}`),
     ],
     { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : 1.0 },
   );
@@ -419,10 +421,34 @@ export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel:
 }
 
 /** 按大纲填充一章：逐个场景写，每个场景接着上一个 */
-export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: string) => void, onDelta: (t: string) => void, signal?: AbortSignal): Promise<string[]> {
+export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: string) => void, onDelta: (t: string) => void, signal?: AbortSignal, existing = ""): Promise<string[]> {
   const ctx = await chapterContext(c, r);
   const prefix = (await stablePrefix(c, "你是作者的代笔。按大纲写正文，直接输出正文段落，不加标题和说明。")) + "\n\n=== 文风 ===\n" + compileStyle(c.style) + "\n\n" + NATURAL;
   const out: string[] = [];
+  // 本章已经有正文：从正文结尾接着写大纲里还没写到的部分，不从头再来
+  if (existing.trim()) {
+    onScene(0, "接着已有正文");
+    const left = Math.max(500, (c.work.chapWords || 3000) - existing.trim().length);
+    const res = await chat(
+      [
+        sys(prefix),
+        user(`${ctx.text}
+
+本章大纲：
+${outlineOf(c, r)}
+
+本章已经写好的正文：
+${writtenSoFar(existing)}
+
+${NO_REPEAT}
+
+先对照本章大纲，找出已经写到哪里；然后从已有正文的最后一句接着往下写，只写大纲里还没写到的部分，约 ${left} 字，写到本章结束为止。如果大纲已经全部写完，就只写一小段收尾。`),
+      ],
+      { model: "write", onDelta, signal, temperature: 1.0 },
+    );
+    out.push(res.content.trim());
+    return out;
+  }
   // 没拆场景、只有一段章大纲时，按整章大纲一次写完
   if (!r.ch.scenes.length) {
     if (!r.ch.ol?.trim()) return out;
@@ -455,7 +481,7 @@ ${outlineOf(c, r)}
 本章大纲：
 ${outlineOf(c, r)}
 
-${out.length ? "本章已经写好的部分（接着写，不要重复）：\n" + out.join("\n\n").slice(-2500) : "这是本章开头。"}
+${out.length ? "本章已经写好的正文：\n" + writtenSoFar(out.join("\n\n")) + "\n\n" + NO_REPEAT : "这是本章开头。"}
 
 现在只写场景${i + 1}「${s.t}」，约 ${s.words || per} 字。写到这个场景的结果为止，不要写下一个场景。`),
       ],

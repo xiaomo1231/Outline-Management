@@ -89,6 +89,20 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
   return { text: parts.join("\n\n"), refs };
 }
 
+/** 本章已经写好的正文：短章给全文，长章保留开头和最近的大段，中间标出省略 */
+export function writtenSoFar(text: string, max = 6000): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const head = Math.round(max * 0.3);
+  return t.slice(0, head) + "\n……（中间省略）……\n" + t.slice(-(max - head));
+}
+
+/** 同一章里不许重复的硬规定 */
+export const NO_REPEAT = `同一章不重复的硬性要求：
+- 上面「本章已经写好的正文」里发生过的情节、说过的话、做过的动作，一律不要再写一遍，也不要换个说法再写一遍。
+- 人物在本章里已经见过面、认出过、介绍过、问过的事，后面就按已经知道来写，不能再像第一次见面那样重新问、重新介绍。
+- 只写还没写到的部分，从已有正文停下的地方自然往下接。`;
+
 /** 大纲和正文都要遵守的“接上前文”规则 */
 export const CONTINUE_RULE = `接上前文的硬性要求：
 - 新内容必须从上一章的章末状态接着往下走：每个人物此刻在哪、和谁在一起、在做什么、处境如何（受伤、被押送、被困、手里有什么），都要延续。
