@@ -77,7 +77,7 @@ describe("M27 归档返回结构不对时当成失败", () => {
     expect(() => toArchive({ summary: "  " }, 1)).toThrow(/格式不对/);
   });
   it("facts 里的 null 和对象丢掉", () => {
-    expect(toArchive({ summary: "摘要", end: "章末", facts: [null, { a: 1 }, "真事实", " ", 3] }, 2)).toEqual({ summary: "摘要", end: "章末", facts: ["真事实", "3"], no: 2 });
+    expect(toArchive({ summary: "摘要", end: "章末", facts: [null, { a: 1 }, "真事实", " ", 3] }, 2)).toEqual({ summary: "摘要", end: "章末", facts: ["真事实", "3"], done: [], no: 2, v: 2 });
   });
 });
 

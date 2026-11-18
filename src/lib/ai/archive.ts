@@ -5,7 +5,7 @@
 import DiffMatchPatch from "diff-match-patch";
 import { chatJson } from "./client";
 import type { Ctx } from "./context";
-import { useStore } from "../store";
+import { toast, useStore } from "../store";
 import * as repo from "../repo";
 import * as mem from "../memory";
 import { allChapters, findChapter, type ChRef } from "../outline";
@@ -20,6 +20,13 @@ export const MIN_WORDS = 500;
 export const MIN_DIFF = 50;
 /** 停手多久后检查 */
 export const IDLE_MS = 2 * 60 * 1000;
+/** 当前归档格式版本，低于它的旧归档算作要补 */
+export const ARCHIVE_V = 2;
+
+/** 旧格式的归档（没有“已做过的事”清单） */
+export function isOld(a: Pick<Archive, "v"> | null | undefined): boolean {
+  return !!a && (a.v ?? 1) < ARCHIVE_V;
+}
 
 export interface Archive {
   /** 150–200 字的章节摘要 */
@@ -28,6 +35,10 @@ export interface Archive {
   end: string;
   /** 这一章确立的事实 */
   facts: string[];
+  /** 这一章已经做过、说过的具体事（动作、交代、定下的安排），后文不能再写一遍 */
+  done?: string[];
+  /** 归档格式版本：2 起有 done 清单 */
+  v?: number;
   /** 归档时这一章是第几章（章号会因为插章变化，只做参考） */
   no: number;
 }
@@ -74,7 +85,7 @@ export async function archiveMap(work: Id): Promise<Map<Id, Archive & { at: numb
   return out;
 }
 
-export type Need = "none" | "short" | "same" | "new" | "changed";
+export type Need = "none" | "short" | "same" | "new" | "changed" | "old";
 
 /** 这一章要不要归档 */
 export async function need(ch: Id, force = false): Promise<{ need: Need; plain: string; diff: number }> {
@@ -84,6 +95,7 @@ export async function need(ch: Id, force = false): Promise<{ need: Need; plain: 
   const row = await repo.loadArchive(ch);
   if (!row) return { need: force || (t?.words ?? 0) >= MIN_WORDS ? "new" : "short", plain, diff: plain.length };
   const diff = diffSize(row.plain ?? "", plain);
+  if (isOld(parseArchive(row))) return { need: "old", plain, diff };
   if (force) return { need: diff ? "changed" : "same", plain, diff };
   return { need: diff >= MIN_DIFF ? "changed" : "same", plain, diff };
 }
@@ -111,8 +123,8 @@ export function toArchive(d: unknown, no: number): Archive {
   const o = d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>) : null;
   const summary = o ? str(o.summary) : "";
   if (!summary) throw new Error("AI 返回的归档格式不对（没有摘要），这次没有保存，旧的归档保留，稍后会再试。");
-  const facts = (Array.isArray(o!.facts) ? o!.facts : []).filter((x): x is string | number => typeof x === "string" || typeof x === "number").map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
-  return { summary, end: str(o!.end), facts, no };
+  const list = (v: unknown, max: number) => (Array.isArray(v) ? v : []).filter((x): x is string | number => typeof x === "string" || typeof x === "number").map((x) => String(x).trim()).filter(Boolean).slice(0, max);
+  return { summary, end: str(o!.end), facts: list(o!.facts, 8), done: list(o!.done, 15), no, v: ARCHIVE_V };
 }
 
 const KEYS = ["id", "class", "power", "clothes", "acc", "want", "rel", "core", "look", "hair", "fear", "values"];
@@ -143,6 +155,7 @@ ${old ? `\n这一章之前归档过，旧的归档是：\n摘要：${old.summary
 {"summary":"200 字以内的章节摘要，写清发生了什么、推进了什么",
  "end":"章末状态：本章结束那一刻，每个在场人物一行，写清 在哪、和谁在一起、在做什么、处境（受伤、被押、被困、持有的关键物品、知道了什么）；最后一行写还在进行中、下一章要接着处理的事",
  "facts":["这一章确立的、以后要记住的事实，每条一句，最多 8 条"],
+ "done":["这一章里已经做过、说过的具体事，按发生顺序，每条一句，最多 15 条。要具体到后文一看就知道不能再写一遍，例如“江彤云已去铁匠铺配了三片甲，两日后取”“萧映棠已问过甲擦完没有，江彤云答已擦完”。写动作、交代、问答、定下的安排，不写感受"],
  "changes":[{"name":"人物","field":"字段键（从上面的键里选）","to":"新值","cause":"触发事件","quote":"原文短引用"}]${old ? `,
  "ripple":"和旧的归档比，这次修改有没有改掉会影响后面章节的东西（人物去向、生死、关系、关键物品、章末局面）。有就用一两句写清改了什么，没有就返回空字符串"` : ""}}
 人设变化只记真正改变了的（身份、处境、关系、外观、能力、动机等），没有就空数组。`,
@@ -269,7 +282,7 @@ export function check(ch: Id, opts: { force?: boolean } = {}): Promise<Need | "e
     const r = findChapter(c.vols, ch);
     if (!r) return "none";
     const n = await need(ch, opts.force);
-    if (n.need !== "new" && n.need !== "changed") return n.need;
+    if (n.need !== "new" && n.need !== "changed" && n.need !== "old") return n.need;
     if (!(await hasKey())) {
       if (opts.force) throw new Error("还没有填 DeepSeek 密钥，请到「设置」里填写。");
       return "none";
@@ -320,7 +333,7 @@ export async function stale(work: Id, vols = useStore.getState().vols): Promise<
     const t = texts.get(r.ch.id);
     if (!t || t.words < MIN_WORDS) continue;
     const a = arcs.get(r.ch.id);
-    if (!a) out.push(r);
+    if (!a || isOld(parseArchive(a))) out.push(r);
     else if (a.plain !== t.plain && diffSize(a.plain ?? "", t.plain) >= MIN_DIFF) out.push(r);
   }
   return out;
@@ -379,4 +392,32 @@ export async function catchUpRecent(work: Id, n = 5): Promise<void> {
   const upd = new Map((await repo.allTexts(work)).map((t) => [t.id, t.updated]));
   list.sort((a, b) => (upd.get(b.ch.id) ?? 0) - (upd.get(a.ch.id) ?? 0));
   for (const r of list.slice(0, n)) await check(r.ch.id).catch(() => {});
+}
+
+/**
+ * 生成前确保前几章的归档是新的：没归档、归档后改过、旧格式的，当场归档（后台正在归档的就等它）。
+ * 出错不挡生成，前文退回用原文。返回补了几章。
+ */
+export async function ensureFresh(work: Id, no: number, n = 3, onStep?: (s: string) => void): Promise<number> {
+  if (!(await hasKey())) return 0;
+  const say = onStep ?? ((s: string) => toast(s + "，整理完再生成……"));
+  const texts = new Map((await repo.allTexts(work)).map((t) => [t.id, t]));
+  const before = allChapters(useStore.getState().vols).filter((x) => x.no < no && texts.get(x.ch.id)?.plain?.trim()).slice(-n);
+  let done = 0;
+  for (const r of before) {
+    const nd = await need(r.ch.id);
+    if (nd.need === "none" || nd.need === "same") {
+      // 后台正在归档这一章：等它跑完
+      if (busy.has(r.ch.id) || queued.has(r.ch.id)) await chain;
+      continue;
+    }
+    say(`先整理第${r.no}章`);
+    try {
+      const x = await check(r.ch.id, { force: true });
+      if (x === "new" || x === "changed" || x === "old") done++;
+    } catch (e) {
+      console.warn("生成前归档失败", e);
+    }
+  }
+  return done;
 }
