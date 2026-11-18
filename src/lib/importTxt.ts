@@ -8,19 +8,21 @@ const CHAP_TIGHT = new RegExp(`^\\s*(第${NUM}[章回节])([^\\s:：·.、，。
 // 「第一章完」「第三章终」这类章末标记，不是标题
 const CHAP_END = /^(?:完|终|完结|结束|完毕)$/;
 
-/** 认章节标题：返回章号部分和章名。tight 是这本书允许的紧凑写法所用的「章/回/节」字，null 表示不认紧凑写法 */
-function chapOf(line: string, tight: string | null): { head: string; name: string } | null {
+/** 认章节标题：返回章号部分和章名。tight 是这本书允许紧凑写法的「章/回/节」字，空串表示不认紧凑写法 */
+function chapOf(line: string, tight: string): { head: string; name: string } | null {
   let m = CHAP.exec(line);
   if (!m && tight) {
     const t = CHAP_TIGHT.exec(line);
-    if (t && t[1].trim().endsWith(tight) && !CHAP_END.test(t[2])) m = t;
+    if (t && tight.includes(t[1].trim().slice(-1)) && !CHAP_END.test(t[2])) m = t;
   }
   return m ? { head: m[1].trim(), name: (m[2] ?? "").trim() } : null;
 }
 
-/** 「第一章雾港」这种紧凑写法只认全书标题最常用的那个「章/回/节」字（有「第X章 章名」就按它们算），
- *  免得「第一章 雾港」的书里单独一行的「第三节课」被切成一章 */
-function tightOf(lines: string[]): string | null {
+/** 「第一章雾港」这种紧凑写法认哪些「章/回/节」字：
+ *  - 有「第X章 章名」时认它们最常用的那个字，免得「第一章 雾港」的书里单独一行的「第三节课」被切成一章；
+ *    另外紧凑写法的「章/回」出现两次以上也认（「第一章雾港」下面分「第一节 初到」的书）
+ *  - 全书没有宽松标题时，紧凑写法要出现两次以上才认，免得没分章的短篇里一行「第三节课」被切成一章 */
+function tightOf(lines: string[]): string {
   const loose = new Map<string, number>();
   const tight = new Map<string, number>();
   const add = (mp: Map<string, number>, h: string) => mp.set(h.slice(-1), (mp.get(h.slice(-1)) ?? 0) + 1);
@@ -33,10 +35,18 @@ function tightOf(lines: string[]): string | null {
     const t = CHAP_TIGHT.exec(l);
     if (t && !CHAP_END.test(t[2])) add(tight, t[1].trim());
   }
-  const mp = loose.size ? loose : tight;
-  let best: string | null = null;
-  for (const [k, n] of mp) if (!best || n > mp.get(best)!) best = k;
-  return best;
+  const top = (mp: Map<string, number>) => {
+    let best = "";
+    for (const [k, n] of mp) if (!best || n > mp.get(best)!) best = k;
+    return best;
+  };
+  if (!loose.size) {
+    const best = top(tight);
+    return best && tight.get(best)! >= 2 ? best : "";
+  }
+  let ok = top(loose);
+  for (const [k, n] of tight) if (k !== "节" && n >= 2 && !ok.includes(k)) ok += k;
+  return ok;
 }
 
 export interface ParsedBook {
