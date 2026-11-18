@@ -20,6 +20,10 @@ export function findInDoc(doc: PMNode, q: string): Hit[] {
       if (c.isText) {
         for (let i = 0; i < c.text!.length; i++) map.push(pos + 1 + off + i);
         text += c.text;
+      } else {
+        // 软换行等非文字节点占一个位置，命中不会跨过它
+        map.push(pos + 1 + off);
+        text += "\n";
       }
     });
     let i = text.indexOf(q);
@@ -57,7 +61,7 @@ export function replaceInHtml(html: string, q: string, rep: string): { html: str
   let n = 0;
   // 先按段落处理，命中被 AI 标记切开时也能换
   d.querySelectorAll("p").forEach((p) => {
-    const t = p.textContent || "";
+    const t = lineText(p);
     const k = countIn(t, q);
     if (!k) return;
     n += k;
@@ -73,8 +77,25 @@ export function replaceInHtml(html: string, q: string, rep: string): { html: str
         left -= c;
       }
     }
-    // 跨节点的命中：整段合成一个文字节点再换（会丢掉这一段的 AI 底色）
-    if (left > 0) p.textContent = (p.textContent || "").split(q).join(rep);
+    // 跨节点的命中：整段合成文字再换（会丢掉这一段的 AI 底色），软换行保留
+    if (left > 0) {
+      p.replaceChildren();
+      t.split("\n").forEach((line, i) => {
+        if (i) p.appendChild(d.ownerDocument.createElement("br"));
+        p.appendChild(d.ownerDocument.createTextNode(line.split(q).join(rep)));
+      });
+    }
   });
   return { html: d.innerHTML, n };
+}
+
+/** 段落文字，软换行 <br> 记成换行，查找不跨行 */
+function lineText(p: Element): string {
+  let s = "";
+  const w = p.ownerDocument.createTreeWalker(p, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let x = w.nextNode(); x; x = w.nextNode()) {
+    if (x.nodeType === 3) s += (x as Text).data;
+    else if ((x as Element).tagName === "BR") s += "\n";
+  }
+  return s;
 }

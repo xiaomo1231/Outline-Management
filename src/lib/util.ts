@@ -24,7 +24,8 @@ export function parseHtml(html: string): HTMLElement {
 }
 
 export function htmlToText(html: string): string {
-  const d = parseHtml(html.replace(/<\/p>/g, "</p>\n"));
+  // 软换行 <br> 也是换行，和编辑器取出的纯文字一致
+  const d = parseHtml(html.replace(/<\/p>/g, "</p>\n").replace(/<br\s*\/?>/gi, "\n"));
   return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
 }
 

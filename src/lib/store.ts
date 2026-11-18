@@ -59,16 +59,26 @@ export function registerFlush(fn: () => Promise<unknown> | unknown): () => void 
   return () => void flushers.delete(fn);
 }
 
-/** 包住一次写库：维护保存状态。失败时记下错误并抛出，由调用方决定怎么重试 */
-export async function trackSave<T>(p: () => Promise<T>): Promise<T> {
+/** 还没存进去的各项（正文按章、各份数据按名字分开记）：某一项存成功不能抹掉别的项的失败 */
+const saveErrs = new Map<string, string>();
+const lastErr = () => [...saveErrs.values()].pop() ?? null;
+/** 这一项后来已经存成功了：清掉它早先那次的失败 */
+export function clearSaveErr(key: string) {
+  if (saveErrs.delete(key)) useStore.setState({ saveErr: lastErr() });
+}
+
+/** 包住一次写库：维护保存状态。失败时记下错误并抛出，由调用方决定怎么重试。key 区分是哪一项 */
+export async function trackSave<T>(p: () => Promise<T>, key = ""): Promise<T> {
   useStore.setState((s) => ({ saving: s.saving + 1 }));
   try {
     const r = await p();
-    useStore.setState((s) => ({ saving: s.saving - 1, savedAt: Date.now(), saveErr: null }));
+    saveErrs.delete(key);
+    useStore.setState((s) => ({ saving: s.saving - 1, savedAt: Date.now(), saveErr: lastErr() }));
     return r;
   } catch (e: any) {
     const msg = String(e?.message || e);
     const first = !useStore.getState().saveErr;
+    saveErrs.set(key, msg);
     useStore.setState((s) => ({ saving: s.saving - 1, saveErr: msg }));
     if (first) useStore.getState().flash("保存失败：" + msg + "。会自动重试，内容先留在本机草稿里");
     throw e;
@@ -85,7 +95,7 @@ function scheduleSave(key: DataKey, delay = 500) {
     const cur = useStore.getState();
     if (cur.work?.id !== wid) return;
     try {
-      await trackSave(() => repo.saveDoc(wid, KIND[key], cur[key]));
+      await trackSave(() => repo.saveDoc(wid, KIND[key], cur[key]), "doc:" + key);
     } catch {
       // 5 秒后再试；期间又有修改会自然合并成一次
       if (useStore.getState().work?.id === wid && !timers.has(key)) scheduleSave(key, 5000);
@@ -141,7 +151,7 @@ export const useStore = create<State>((set, get) => ({
     if (!w) return;
     const nw = { ...w, ...patch, updated: Date.now() };
     set({ work: nw, works: get().works.map((x) => (x.id === nw.id ? nw : x)) });
-    trackSave(() => repo.saveWork(nw)).catch(() => {});
+    trackSave(() => repo.saveWork(nw), "work").catch(() => {});
   },
 
   async removeWork(id) {

@@ -23,9 +23,11 @@ export function needSnapshot(last: SnapMeta | null, now: number, cur: { words: n
   return Math.abs(cur.words - last.words) >= SNAP_WORDS;
 }
 
-/** 一章原来不少于 500 字，这次少了一半以上（含变空），就算字数骤降 */
+/** 少于这么多字的删改不算骤降（删一两句不用每次都留快照、弹提示） */
+export const SHRINK_MIN = 50;
+/** 这次少了一半以上（含变空、全选覆盖），且少了不止 50 字，就算字数骤降。短章也算，否则没有快照可找回 */
 export function isShrink(oldWords: number, newWords: number): boolean {
-  return oldWords >= 500 && newWords < oldWords * 0.5;
+  return oldWords - newWords >= SHRINK_MIN && newWords < oldWords * 0.5;
 }
 
 /**
