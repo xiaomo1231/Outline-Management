@@ -5,6 +5,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { AiEdit, AiText, AiTracker, AI_META, aiChars } from "../components/aiMarks";
 import { ScanHighlight, scanKey, setBanWords } from "../components/scanDeco";
 import { KeepCaret } from "../components/keepCaret";
+import { SelectionUi, keepSelKey } from "../components/selectionUi";
 import { Guide } from "../components/Guide";
 import { useStore, toast, registerFlush } from "../lib/store";
 import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraft, type Snap } from "../lib/chapterSave";
@@ -152,7 +153,7 @@ export default function Write() {
   const save = useMemo(() => debounce((id: string, ed: Editor) => saveNow(id, snapOf(ed)), 700), [work.id]);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight, KeepCaret],
+    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight, KeepCaret, SelectionUi],
     content: "",
     editorProps: {
       // Ctrl+Enter 留给「接下来怎么写」，不让编辑器插换行
@@ -172,17 +173,6 @@ export default function Write() {
       const st = useStore.getState();
       const at = findChapter(st.vols, loadedFor.current);
       if (at && at.ch.status === "大纲" && ed.getText().trim().length >= 20) st.edit("vols", (d) => void (d[at.v].chapters[at.c].status = "写作中"));
-    },
-    onSelectionUpdate: ({ editor: ed }) => {
-      const root = ed.view.dom;
-      root.querySelectorAll("p.active").forEach((p) => p.classList.remove("active"));
-      try {
-        const { node } = ed.view.domAtPos(ed.state.selection.from);
-        const p = (node.nodeType === 3 ? node.parentElement : (node as HTMLElement))?.closest("p");
-        p?.classList.add("active");
-      } catch {
-        /* 光标在文档边缘 */
-      }
     },
   });
 
@@ -236,6 +226,13 @@ export default function Write() {
       }),
     [editor, save],
   );
+
+  // 右键菜单开着时保留选中底色（焦点在菜单输入框里，浏览器会收起正文的选中显示）
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const on = !!menu;
+    if (keepSelKey.getState(editor.state) !== on) editor.view.dispatch(editor.state.tr.setMeta(keepSelKey, on).setMeta("addToHistory", false));
+  }, [editor, menu]);
 
   // Ctrl+Enter
   useEffect(() => {
@@ -688,7 +685,11 @@ export default function Write() {
             {menu && (
               <SelMenu
                 at={menu}
-                close={() => setMenu(null)}
+                close={() => {
+                  setMenu(null);
+                  // 关掉菜单后把焦点和原来的选区还给正文
+                  editor?.commands.focus(null, { scrollIntoView: false });
+                }}
                 run={(op, note) => {
                   setMenu(null);
                   selOp(op, note);
@@ -1019,7 +1020,7 @@ function SelMenu({ at, close, run, copy, next }: { at: { x: number; y: number; s
   }, [close]);
   return (
     <>
-      <div className="ctx-mask" onMouseDown={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+      <div className="ctx-mask" onMouseDown={(e) => { e.preventDefault(); close(); }} onContextMenu={(e) => { e.preventDefault(); close(); }} />
       <div className="ctx-menu" role="menu" aria-label="AI 处理选中的文字" style={{ left: at.x, top: at.y }}>
         <div className="ctx-h">{at.sel ? "AI 处理选中的文字" : "AI 接着写"}</div>
         <input
