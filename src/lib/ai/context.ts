@@ -7,7 +7,9 @@ import { describe } from "../chars";
 import * as mem from "../memory";
 import * as repo from "../repo";
 import { phaseName } from "../plan";
-import { PATTERNS, parseBans } from "../aiscan";
+import { PATTERNS } from "../aiscan";
+import { limitsBlock, limitsTail, type LimitAt, type LimitTask } from "../limits";
+import { mentioned } from "../mention";
 import { archiveMap } from "./archive";
 import { clip } from "../util";
 import { residentLimitOf, type MemPrefs } from "../hooks";
@@ -31,16 +33,27 @@ export async function resident(c: Ctx): Promise<string> {
   return mem.buildResident(c.work, c.chars, c.vols, c.events, compileStyle(c.style), facts, limit);
 }
 
-/** 系统提示的稳定前缀 */
-export async function stablePrefix(c: Ctx, role: string): Promise<string> {
-  return `${role}\n\n=== 核心摘要（这本书的核心信息）===\n${await resident(c)}${bansText(c)}`;
+/**
+ * 系统提示的稳定前缀。task 决定带哪些写作限制：
+ * prose 写正文和聊天（全部）、plan 排大纲和人设（情节、尺度、人物）、check 校对（全部，当检查项）
+ */
+export async function stablePrefix(c: Ctx, role: string, task: LimitTask = "prose", at?: LimitAt): Promise<string> {
+  const lim = limitsBlock(c.style?.limits, task, at);
+  return `${role}\n\n=== 核心摘要（这本书的核心信息）===\n${await resident(c)}${lim ? "\n\n" + lim : ""}`;
 }
 
-/** 作者的禁用清单，所有任务都带上 */
-export function bansText(c: Pick<Ctx, "style">): string {
-  const { all } = parseBans(c.style?.bans);
-  if (!all.length) return "";
-  return "\n\n=== 禁用清单（作者明确不要的，任何时候都不能写，也不能换个说法写）===\n" + all.map((x) => "- " + x).join("\n");
+/** 正在写的这一章在哪一卷、有哪些人物：按卷生效、「只管这些人」的限制据此筛选 */
+export function atOf(c: Pick<Ctx, "vols" | "chars">, r: ChRef | undefined): LimitAt | undefined {
+  if (!r) return undefined;
+  const text = [r.ch.ol ?? "", ...r.ch.scenes.map((s) => [s.t, s.goal, s.conf, s.pov ?? "", ...s.who].join("\n"))].join("\n");
+  const names = new Set([...mentioned(c.chars, text), ...r.ch.scenes.flatMap((s) => [...s.who, s.pov ?? ""]).filter(Boolean)]);
+  return { vol: c.vols[r.v]?.id, names: [...names] };
+}
+
+/** 生成请求的最后一行：再提醒一遍写作限制，没有限制时为空 */
+export function limitsReminder(c: Pick<Ctx, "style">, task: LimitTask = "prose", at?: LimitAt): string {
+  const t = limitsTail(c.style?.limits, task, at);
+  return t ? "\n\n" + t : "";
 }
 
 function words(s: string): string[] {
