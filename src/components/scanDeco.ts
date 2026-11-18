@@ -53,15 +53,17 @@ export const ScanHighlight = Extension.create({
           decorations(state) {
             if (!scanKey.getState(state)) return null;
             const decos: Decoration[] = [];
-            state.doc.descendants((n, pos) => {
-              if (!n.isText || !n.text) return;
-              for (const p of PATTERNS) {
-                p.re.lastIndex = 0;
-                let m: RegExpExecArray | null;
-                while ((m = p.re.exec(n.text))) decos.push(Decoration.inline(pos + m.index, pos + m.index + m[0].length, { class: "cliche", title: p.label }));
-              }
-            });
+            // 按整段文字匹配再换回文档位置：加粗、AI 标记会把一段拆成几个文本节点，逐个节点匹配会漏掉跨节点的套话
             const { text, at } = docText(state.doc);
+            for (const p of PATTERNS) {
+              p.re.lastIndex = 0;
+              let m: RegExpExecArray | null;
+              while ((m = p.re.exec(text))) {
+                const a = at(m.index);
+                const b = at(m.index + m[0].length);
+                if (a >= 0 && b > a) decos.push(Decoration.inline(a, b, { class: "cliche", title: p.label }));
+              }
+            }
             for (const h of limitScan(text)) {
               const a = at(h.from);
               const b = at(h.to);

@@ -96,6 +96,25 @@ export function fmtHM(at: number | Date): string {
 }
 
 const CN = "零一二三四五六七八九";
+const CN_D: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+const CN_U: Record<string, number> = { 十: 10, 百: 100, 千: 1000 };
+/** 中文数字转数字（cnNum 反过来）：十→10，二十五→25，一百零五→105；认不出返回 NaN */
+export function cnToNum(s: string): number {
+  if (!s) return NaN;
+  let total = 0;
+  let cur = 0;
+  for (const ch of s) {
+    if (ch in CN_D) cur = CN_D[ch];
+    else if (ch in CN_U) {
+      total += (cur || 1) * CN_U[ch];
+      cur = 0;
+    } else if (ch === "万") {
+      total = (total + cur) * 10000;
+      cur = 0;
+    } else return NaN;
+  }
+  return total + cur;
+}
 /** 1→一，12→十二，25→二十五，105→一百零五 */
 export function cnNum(n: number): string {
   if (n <= 0 || n >= 10000 || !Number.isInteger(n)) return String(n);

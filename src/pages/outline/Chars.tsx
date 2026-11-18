@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useStore, toast } from "../../lib/store";
 import CharLimits from "../../components/CharLimits";
 import { GROUPS, ROLES, SIMPLE, fieldLabel, fieldMode } from "../../lib/charFields";
-import { completion, snapshot } from "../../lib/chars";
+import { completion, renameRefs, snapshot } from "../../lib/chars";
 import { allChapters, findChapter } from "../../lib/outline";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
@@ -118,6 +118,17 @@ async function draft(i: number, scope: string, say: Say) {
   }
 }
 
+/** 改名前的名字：姓名框获得焦点时记下，失去焦点时把称呼表、场景人物等引用一起改过来 */
+let nameBefore = "";
+const nameFocus = (e: { target: HTMLInputElement }) => void (nameBefore = e.target.value);
+function nameBlur(e: { target: HTMLInputElement }) {
+  const from = nameBefore;
+  const to = e.target.value;
+  nameBefore = to;
+  if (from.trim() === to.trim()) return;
+  useStore.getState().editMany(["vols", "events", "calls", "style"], (d) => renameRefs({ chars: d.chars, vols: d.vols, events: d.events, calls: d.calls, limits: d.style.limits }, from, to));
+}
+
 function setField(id: string, k: string, v: string) {
   useStore.getState().edit("chars", (d) => {
     const p = d.find((x) => x.id === id);
@@ -141,7 +152,7 @@ export function SimpleChars({ say }: { say: Say }) {
                 <option key={r}>{r}</option>
               ))}
             </select>
-            <input value={c.name} placeholder="姓名（可让 AI 起）" aria-label="姓名" onChange={(e) => edit("chars", (d) => void (d[i].name = e.target.value))} />
+            <input value={c.name} placeholder="姓名（可让 AI 起）" aria-label="姓名" onFocus={nameFocus} onBlur={nameBlur} onChange={(e) => edit("chars", (d) => void (d[i].name = e.target.value))} />
           </div>
           {SIMPLE.map(([k, l]) => (
             <div className="fld" key={k}>
@@ -219,7 +230,8 @@ export function DetailChars({ say }: { say: Say }) {
   const comp = completion(c);
   const no = at ?? chs.length;
   const snap = snapshot(c, vols, no);
-  const changes = (c.changes ?? []).slice().sort((a, b) => (findChapter(vols, a.ch)?.no ?? 0) - (findChapter(vols, b.ch)?.no ?? 0));
+  // 挂的章已经删掉的变化排在最后，不生效
+  const changes = (c.changes ?? []).slice().sort((a, b) => (findChapter(vols, a.ch)?.no ?? Infinity) - (findChapter(vols, b.ch)?.no ?? Infinity));
 
   return (
     <div className="cd">
@@ -247,7 +259,7 @@ export function DetailChars({ say }: { say: Say }) {
                 <option key={r}>{r}</option>
               ))}
             </select>
-            <input value={c.name} placeholder="姓名" aria-label="姓名" onChange={(e) => edit("chars", (d) => void (d[ci].name = e.target.value))} />
+            <input value={c.name} placeholder="姓名" aria-label="姓名" onFocus={nameFocus} onBlur={nameBlur} onChange={(e) => edit("chars", (d) => void (d[ci].name = e.target.value))} />
             <AsyncButton primary onClick={() => draft(ci, "all", say)}>
               AI 补全全部空白
             </AsyncButton>
@@ -301,10 +313,10 @@ export function DetailChars({ say }: { say: Say }) {
                 </thead>
                 <tbody>
                   {changes.map((x) => {
-                    const n = findChapter(vols, x.ch)?.no ?? 0;
+                    const n = findChapter(vols, x.ch)?.no;
                     return (
-                      <tr key={x.id} style={{ opacity: n > no ? 0.45 : 1 }}>
-                        <td className="num">第{n}章</td>
+                      <tr key={x.id} style={{ opacity: n == null || n > no ? 0.45 : 1 }}>
+                        <td className="num">{n == null ? <span title="这一章已经删除，这条变化不生效">章已删除</span> : `第${n}章`}</td>
                         <td>{fieldLabel(x.field)}</td>
                         <td>
                           {x.from || "（空）"} → <b>{x.to}</b>
@@ -488,7 +500,9 @@ function CallTable() {
   const calls = useStore((s) => s.calls);
   const chars = useStore((s) => s.chars);
   const edit = useStore((s) => s.edit);
-  const names = chars.map((c) => c.name).filter(Boolean);
+  const names = [...new Set(chars.map((c) => c.name).filter(Boolean))];
+  // 人物删了或老数据里名字对不上：照样显示出来并提示，不显示成空的「谁」
+  const gone = (n: string) => n && !names.includes(n) && <option value={n}>{n}（不在人物表里）</option>;
   return (
     <div className="grp">
       <header>
@@ -500,11 +514,13 @@ function CallTable() {
           <div className="addrow" key={i} style={{ marginTop: 4 }}>
             <select className="btn" value={x.from} aria-label="谁" onChange={(e) => edit("calls", (d) => void (d[i].from = e.target.value))}>
               <option value="">谁</option>
+              {gone(x.from)}
               {names.map((n) => <option key={n}>{n}</option>)}
             </select>
             <span className="src">叫</span>
             <select className="btn" value={x.to} aria-label="叫谁" onChange={(e) => edit("calls", (d) => void (d[i].to = e.target.value))}>
               <option value="">谁</option>
+              {gone(x.to)}
               {names.map((n) => <option key={n}>{n}</option>)}
             </select>
             <input value={x.term} placeholder="称呼" aria-label="称呼" onChange={(e) => edit("calls", (d) => void (d[i].term = e.target.value))} />
