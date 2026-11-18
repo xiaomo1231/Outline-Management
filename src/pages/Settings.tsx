@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
-import { DEFAULT_AI, listModels, chat, errText, type AiSettings } from "../lib/ai/client";
+import { DEFAULT_AI, listModels, chat, errText, normAi, type AiSettings } from "../lib/ai/client";
 import { EDITOR_DEFAULT, MEM_DEFAULT, RESIDENT_MAX, RESIDENT_MIN, residentLimitOf, useSetting, type EditorPrefs, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
@@ -101,15 +101,15 @@ export default function Settings() {
         <div className="meta-row" style={{ marginTop: 10 }}>
           <label>
             日常模型（起草、梳理、聊天）
-            <input list="models" value={ai.model} onChange={(e) => setAi({ ...ai, model: e.target.value })} />
+            <input list="models" value={ai.model} onChange={(e) => setAi({ ...ai, model: e.target.value })} onBlur={() => setAi(normAi(ai))} />
           </label>
           <label>
             写正文和深度检查用的模型
-            <input list="models" value={ai.writeModel} onChange={(e) => setAi({ ...ai, writeModel: e.target.value })} />
+            <input list="models" value={ai.writeModel} onChange={(e) => setAi({ ...ai, writeModel: e.target.value })} onBlur={() => setAi(normAi(ai))} />
           </label>
           <label>
             创造性（temperature，0–2）
-            <input type="number" min={0} max={2} step={0.1} value={ai.temperature} onChange={(e) => setAi({ ...ai, temperature: +e.target.value })} />
+            <input type="number" min={0} max={2} step={0.1} value={ai.temperature} onChange={(e) => setAi({ ...ai, temperature: +e.target.value })} onBlur={() => setAi(normAi(ai))} />
           </label>
           <label>
             每天 token 上限（0 为不限）

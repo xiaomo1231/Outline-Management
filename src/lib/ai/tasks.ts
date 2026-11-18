@@ -201,7 +201,13 @@ ${outlineOf(c, r)}
     ],
     { temperature: 1.0 },
   );
-  return (res.scenes ?? []).map((s) => ({ id: "", t: s.t, goal: s.goal || "", conf: s.conf || "", who: s.who || [], plant: s.plant || "", pay: s.pay || "", ai: true }));
+  // 模型常把 who 返回成「林舟、苏晚」这样的字符串，规整成数组
+  return (Array.isArray(res.scenes) ? res.scenes : []).filter(Boolean).map((s) => ({ id: "", t: String(s.t ?? "场景"), goal: s.goal || "", conf: s.conf || "", who: whoList(s.who), plant: s.plant || "", pay: s.pay || "", ai: true }));
+}
+
+function whoList(w: unknown): string[] {
+  if (Array.isArray(w)) return w.filter(Boolean).map(String);
+  return typeof w === "string" ? w.split(/[、，,;；\s]+/).filter(Boolean) : [];
 }
 
 export interface SplitChapter {
@@ -391,13 +397,16 @@ ${NO_REPEAT}
     ],
     { model: "write", temperature: 1.2 },
   );
-  return res.options ?? [];
+  // 缺 t 的选项点了会出错，丢掉
+  return (Array.isArray(res.options) ? res.options : []).filter((o) => o && typeof o.t === "string" && o.t.trim()).map((o) => ({ t: o.t, d: String(o.d ?? "") }));
 }
 
 export const SEL_OPS: Record<string, string> = {
   续写: "接着这段往下写一段（150–300 字），衔接自然。",
   扩写: "把这段扩写到原来的一倍半到两倍，补动作、细节和对白，不改情节。",
+  缩写: "把这段压缩到原来的一半左右，删掉重复和可有可无的描写，保留关键情节、动作和对白。",
   改写: "换一种写法重写这段，意思不变。",
+  换说法: "句子的意思和顺序都不变，只换一种说法：换掉用词和句式，不增删内容。",
   润色: "只做轻度润色：理顺不通的句子、去掉重复和套话，保留作者的用词习惯。改动越少越好。",
   改对白口吻: "只改对白，让每个人说话更符合他的人设和说话方式，叙述部分不动。",
 };

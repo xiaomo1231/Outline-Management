@@ -186,14 +186,32 @@ export const useStore = create<State>((set, get) => ({
   },
 
   undoChange(id) {
-    const cs = get().changesets.find((x) => x.id === id);
+    const all = get().changesets;
+    const idx = all.findIndex((x) => x.id === id);
+    const cs = all[idx];
     if (!cs || cs.undone) return;
-    const patch: Partial<WorkData> = {};
-    for (const [kind, v] of Object.entries(cs.before)) {
-      const key = (Object.keys(KIND) as DataKey[]).find((k) => KIND[k] === kind);
-      if (key) (patch as any)[key] = v;
+    // 之后动过同一份数据的组会被一起回退，也要标成已撤销，否则再撤销它们会把这一组的改动复活。
+    // changesets 新的在前；每份数据取这批里最早那组的 before
+    const group = new Set([id]);
+    const kinds = new Set(Object.keys(cs.before));
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const x of all.slice(0, idx)) {
+        if (group.has(x.id) || x.undone || !Object.keys(x.before).some((k) => kinds.has(k))) continue;
+        group.add(x.id);
+        Object.keys(x.before).forEach((k) => kinds.add(k));
+        grew = true;
+      }
     }
-    set({ ...patch, changesets: get().changesets.map((x) => (x.id === id ? { ...x, undone: true } : x)) });
+    const patch: Partial<WorkData> = {};
+    for (const x of all.slice(0, idx + 1).reverse()) {
+      if (!group.has(x.id)) continue;
+      for (const [kind, v] of Object.entries(x.before)) {
+        const key = (Object.keys(KIND) as DataKey[]).find((k) => KIND[k] === kind);
+        if (key && !(key in patch)) (patch as any)[key] = v;
+      }
+    }
+    set({ ...patch, changesets: all.map((x) => (group.has(x.id) ? { ...x, undone: true } : x)) });
     [...(Object.keys(patch) as DataKey[]), "changesets" as DataKey].forEach(scheduleSave);
     get().flash(`已撤销：${cs.label}`);
   },

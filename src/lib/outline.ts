@@ -351,7 +351,8 @@ export function parseQuickChapters(text: string): { t: string; ol: string; hook:
 export function firstLine(text: string): string {
   const lines = text
     .split(/\r?\n/)
-    .map((l) => l.replace(/^[\s#>*\-•\d.、]+/, "").replace(/[*_`]/g, "").trim())
+    // 只去掉列表序号「1.」「2、」，不吃掉「1937年」这种开头的数字
+    .map((l) => l.replace(/^[\s#>*\-•]+/, "").replace(/^\d+[.、)](?!\d)\s*/, "").replace(/[*_`]/g, "").trim())
     .filter(Boolean);
   const good = lines.find((l) => !/^(好的|当然|以下|下面|这是|没问题)/.test(l) && !/[:：]$/.test(l));
   return good ?? lines[0] ?? "";
