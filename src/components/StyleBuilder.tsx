@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { StyleBlock, StyleDims, StyleSetup } from "../lib/types";
-import { allBlocks, BUILTIN, blockById, compileStyle, DIMS, fuse, impact, leak } from "../lib/style";
+import { allBlocks, BUILTIN, blockById, compileStyle, DIMS, fuse, hasDims, impact, leak, normDims } from "../lib/style";
 import { analyzeBook, decode, dimsFromMetrics, METRIC_ROWS, metricsText, nearest } from "../lib/corpus";
 import type { StyleMetrics } from "../lib/types";
 import { Seg, Empty } from "./ui";
@@ -34,7 +34,8 @@ export default function StyleBuilder({ value, onChange }: { value: StyleSetup; o
   function saveBlock(b: Omit<StyleBlock, "id">): string[] | null {
     const hit = leak(b);
     if (hit.length) return hit;
-    onChange({ ...s, blocks: [...s.blocks, { ...b, id: uid("st"), kind: "custom" }] });
+    // AI 给的维度可能是数组：存成字符串，「按规则合并」等地方才能照常用
+    onChange({ ...s, blocks: [...s.blocks, { ...b, dims: normDims(b.dims), id: uid("st"), kind: "custom" }] });
     return null;
   }
   function delBlock(id: string) {
@@ -189,7 +190,7 @@ function DraftView({ d }: { d: { name: string; desc: string; dims: StyleDims } }
       <dd>{d.name}</dd>
       <dt>生效场景</dt>
       <dd>{d.desc}</dd>
-      {DIMS.filter(([k]) => d.dims[k]).map(([k, l]) => (
+      {DIMS.filter(([k]) => d.dims?.[k]).map(([k, l]) => (
         <div key={k}>
           <dt>{l}</dt>
           <dd>{d.dims[k]}</dd>
@@ -205,6 +206,8 @@ function StyleChat({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string[]
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [saved, setSaved] = useState("");
+  // 已经存过的草稿：同一份不再存第二次
+  const [savedOf, setSavedOf] = useState<T.StyleDraft | null>(null);
 
   async function send(t: string) {
     t = t.trim();
@@ -216,7 +219,9 @@ function StyleChat({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string[]
     setErr("");
     try {
       const d = await T.styleChat(next.map((m) => ({ role: m.role, content: m.draft ? JSON.stringify({ name: m.draft.name, desc: m.draft.desc, dims: m.draft.dims }) : m.content })));
-      setMsgs([...next, { role: "assistant", content: d.reply, draft: d }]);
+      // AI 只回了一句话（例如反问作者）、没给草稿：当普通消息显示
+      const ok = hasDims(d.dims);
+      setMsgs([...next, { role: "assistant", content: d.reply || (ok ? "" : "AI 没有给出风格草稿，请换个说法再试。"), draft: ok ? d : undefined }]);
     } catch (e) {
       setErr(errText(e));
     } finally {
@@ -241,12 +246,14 @@ function StyleChat({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string[]
         <div className="chips">
           <button
             type="button"
+            disabled={last === savedOf}
             onClick={() => {
               const hit = onSave({ name: last.name, desc: last.desc, dims: { ...EMPTY_DIMS, ...last.dims }, kind: "custom", ai: true });
+              if (!hit) setSavedOf(last);
               setSaved(hit ? `包含具体内容或套路词「${hit.join("」「")}」，请让 AI 改掉后再存。` : `已存为「${last.name}」，在风格库的「我的风格」里。`);
             }}
           >
-            一键存为风格块
+            {last === savedOf ? "已存为风格块" : "一键存为风格块"}
           </button>
           <button type="button" onClick={() => send("再冷一点")}>
             再冷一点
@@ -272,6 +279,7 @@ function StyleMix({ setup, onSave }: { setup: StyleSetup; onSave: (b: Omit<Style
   const [note, setNote] = useState("");
   const [name, setName] = useState("");
   const [draft, setDraft] = useState<T.StyleDraft | null>(null);
+  const [savedOf, setSavedOf] = useState<T.StyleDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const blocks = pick.map((id) => blockById(setup, id)).filter(Boolean) as StyleBlock[];
@@ -310,7 +318,8 @@ function StyleMix({ setup, onSave }: { setup: StyleSetup; onSave: (b: Omit<Style
             setMsg("");
             try {
               const d = await T.fuseStyles(blocks, note);
-              setDraft({ ...d, name: name || d.name });
+              if (!hasDims(d.dims)) setMsg(d.reply || "AI 没有给出融合后的风格，请再试一次。");
+              else setDraft({ ...d, name: name || d.name });
             } catch (e) {
               setMsg(errText(e));
             } finally {
@@ -328,12 +337,14 @@ function StyleMix({ setup, onSave }: { setup: StyleSetup; onSave: (b: Omit<Style
           <div className="chips">
             <button
               type="button"
+              disabled={draft === savedOf}
               onClick={() => {
                 const hit = onSave({ name: draft.name, desc: draft.desc, dims: { ...EMPTY_DIMS, ...draft.dims }, kind: "custom", ai: true });
+                if (!hit) setSavedOf(draft);
                 setMsg(hit ? `包含「${hit.join("」「")}」，请删掉后再存。` : `已存为「${draft.name}」。`);
               }}
             >
-              存为风格块
+              {draft === savedOf ? "已存为风格块" : "存为风格块"}
             </button>
           </div>
         </div>
@@ -392,6 +403,7 @@ function BookAnalyze({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string
   const [book, setBook] = useState<Book | null>(null);
   const [busy, setBusy] = useState("");
   const [draft, setDraft] = useState<{ name: string; desc: string; dims: StyleDims; reply?: string } | null>(null);
+  const [savedOf, setSavedOf] = useState<typeof draft>(null);
   const [lint, setLint] = useState<{ ok: boolean; t: string } | null>(null);
   const ref = nearest(book?.body ?? ({} as StyleMetrics), BUILTIN);
 
@@ -422,7 +434,17 @@ function BookAnalyze({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string
       </p>
       <label className="btn" style={{ alignSelf: "flex-start" }}>
         选择 txt 文件
-        <input type="file" accept=".txt,text/plain" hidden onChange={(e) => e.target.files?.[0] && load(e.target.files[0])} />
+        <input
+          type="file"
+          accept=".txt,text/plain"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            // 清空，再选同一个文件也会重新读
+            e.target.value = "";
+            if (f) load(f);
+          }}
+        />
       </label>
       {busy && <p className="legend">{busy}</p>}
       {book && (
@@ -466,7 +488,8 @@ function BookAnalyze({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string
               setBusy("AI 正在读三段样本（约 4500 字）……");
               try {
                 const d = await T.describeStyle(book.name, metricsText(book.body, "这本书的统计"), book.samples);
-                setDraft({ ...d, dims: { ...EMPTY_DIMS, ...d.dims } });
+                if (!hasDims(d.dims)) setLint({ ok: false, t: d.reply || "AI 没有给出写法描述，请再试一次。" });
+                else setDraft({ ...d, dims: { ...EMPTY_DIMS, ...d.dims } });
               } catch (e) {
                 setLint({ ok: false, t: errText(e) });
               } finally {
@@ -492,13 +515,15 @@ function BookAnalyze({ onSave }: { onSave: (b: Omit<StyleBlock, "id">) => string
               <button
                 className="btn primary"
                 type="button"
+                disabled={draft === savedOf}
                 onClick={() => {
                   const hit = onSave({ name: draft.name.trim() || "拆书风格", desc: draft.desc || "全篇", dims: draft.dims, kind: "custom", metrics: { ...book.body, books: 1 } });
                   if (hit) return setLint({ ok: false, t: `包含具体内容或套路词「${hit.join("」「")}」。风格块只写怎么写，请删掉后再保存。` });
+                  setSavedOf(draft);
                   setLint({ ok: true, t: "已保存到「我的风格」，统计数字也一起存了，设为核心后会写进提示词。" });
                 }}
               >
-                保存为风格块
+                {draft === savedOf ? "已保存为风格块" : "保存为风格块"}
               </button>
             </>
           )}

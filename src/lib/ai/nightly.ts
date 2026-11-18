@@ -61,14 +61,15 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
     // 3. 核心摘要压短捋顺
     onStep?.("整理核心摘要");
     const facts = await mem.items(c.work.id, 1);
-    const raw = mem.buildResident(cur.work, cur.chars, cur.vols, cur.events, compileStyle(cur.style), facts, residentLimit * 2);
+    const styleText = compileStyle(cur.style);
+    const raw = mem.buildResident(cur.work, cur.chars, cur.vols, cur.events, styleText, facts, residentLimit * 2);
     const res = await chat([
       { role: "system", content: `你整理小说的「核心摘要」：每次调用 AI 都会带上它。一半写人物当前状态和写作规范，一半写剧情事实和未收伏笔。压到 ${residentLimit} 字以内，信息不丢，去掉重复，用短句。直接输出正文。` },
       { role: "user", content: raw },
     ], { temperature: 0.2 });
     const text = res.content.trim().slice(0, Math.round(residentLimit * 1.1));
     if (text) {
-      await mem.saveResident(c.work.id, text, residentLimit);
+      await mem.saveResident(c.work.id, text, residentLimit, mem.styleSig(styleText));
       lines.push(`核心摘要 ${text.length} 字（上限 ${residentLimit}）。`);
     } else {
       bad = true;

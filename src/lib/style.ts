@@ -70,6 +70,37 @@ export function leak(block: Pick<StyleBlock, "name" | "desc" | "dims">): string[
   return BANNED.filter((w) => all.includes(w));
 }
 
+/** 一个维度的值：AI 可能返回数组、数字或干脆没有，一律转成字符串 */
+function dimText(v: unknown): string {
+  if (v == null) return "";
+  if (Array.isArray(v)) return v.map(dimText).filter(Boolean).join("、");
+  if (typeof v === "object") return Object.values(v as object).map(dimText).filter(Boolean).join("；");
+  return String(v);
+}
+
+/** 风格块的各维度规整成字符串：缺的给空值，数组用顿号连起来 */
+export function normDims(x: unknown): StyleDims {
+  const o = x && typeof x === "object" && !Array.isArray(x) ? (x as Record<string, unknown>) : {};
+  const d = { ...E };
+  for (const [k] of DIMS) d[k] = dimText(o[k]);
+  return d;
+}
+
+/** 有没有写了内容的维度 */
+export function hasDims(d: StyleDims): boolean {
+  return Object.values(d).some((x) => x.trim());
+}
+
+/**
+ * AI 返回的风格草稿规整成完整结构：AI 只回了一句话（反问作者）时没有 dims、没有 name，
+ * 直接拿去显示会整页白屏。缺的维度给空值，名称给默认名。
+ */
+export function normDraft(raw: unknown, name = "新风格"): { name: string; desc: string; dims: StyleDims; reply: string } {
+  if (typeof raw === "string") return { name, desc: "全篇", dims: { ...E }, reply: raw };
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  return { name: dimText(o.name).trim() || name, desc: dimText(o.desc).trim() || "全篇", dims: normDims(o.dims), reply: dimText(o.reply) };
+}
+
 export function emptySetup(): StyleSetup {
   return { core: null, sub: [], accent: [], rules: "", samples: "", blocks: [], limits: [] };
 }
@@ -168,7 +199,7 @@ export function fuse(blocks: StyleBlock[], name: string): StyleBlock {
   const dims = { ...E };
   for (const [k] of DIMS) {
     if (k === "avoid") {
-      const set = new Set(blocks.flatMap((x) => x.dims.avoid.split(/[、，,]/).map((y) => y.trim()).filter(Boolean)));
+      const set = new Set(blocks.flatMap((x) => dimText(x.dims.avoid).split(/[、，,]/).map((y) => y.trim()).filter(Boolean)));
       dims.avoid = [...set].join("、");
     } else {
       const vs = blocks.map((x) => x.dims[k]).filter(Boolean);

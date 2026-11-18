@@ -5,7 +5,7 @@ import { activeLimits, applySentenceFixes, badSentences, limitsBlock, type Limit
 import { GROUPS, fieldLabel, SIMPLE } from "../charFields";
 import type { Character, Scene, StoryEvent, StyleBlock, StyleDims, WriteLimit } from "../types";
 import { allChapters, type ChRef } from "../outline";
-import { compileStyle, DIMS, leak } from "../style";
+import { compileStyle, DIMS, leak, normDraft } from "../style";
 import { describe } from "../chars";
 import * as repo from "../repo";
 import { clip } from "../util";
@@ -604,7 +604,7 @@ export interface StyleDraft {
 
 export async function styleChat(history: { role: "user" | "assistant"; content: string }[]): Promise<StyleDraft> {
   const dimList = DIMS.map(([k, l]) => `${k}：${l}`).join("\n");
-  const res = await chatJson<StyleDraft>(
+  const res = await chatJson<unknown>(
     [
       sys(`你帮小说作者把想要的“写法”整理成风格块。风格块只描述怎么写（视角、语言、词汇质感、节奏、对白、基调、避免什么），绝不包含人物、情节、桥段、设定名词和套路。
 用户提到具体情节时，把它翻译成写法，或者说明风格块不放这些。
@@ -615,22 +615,23 @@ ${dimList}
     ],
     { temperature: 0.9 },
   );
-  return res;
+  return normDraft(res);
 }
 
 export async function fuseStyles(blocks: StyleBlock[], note: string): Promise<StyleDraft> {
-  return chatJson<StyleDraft>(
+  const res = await chatJson<unknown>(
     [
       sys("你把几个小说风格块融合成一个新的风格块。只写怎么写，不写内容。冲突的地方要做取舍并说明。返回 JSON：{name, desc, dims:{pov,lang,vocab,rhythm,dialog,tone,avoid}, reply}"),
       user(`要融合的风格：\n${blocks.map((b) => `【${b.name}】${b.desc}\n` + DIMS.filter(([k]) => b.dims[k]).map(([k, l]) => `${l}：${b.dims[k]}`).join("\n")).join("\n\n")}\n\n作者的要求：${note || "以第一个为主"}`),
     ],
     { temperature: 0.8 },
   );
+  return normDraft(res, blocks.map((b) => b.name).join("×"));
 }
 
 /** 拆书：根据统计数字和三段样本，描述这本书的写法（不复述情节） */
 export async function describeStyle(title: string, metricsLine: string, samples: string[]): Promise<StyleDraft> {
-  return chatJson<StyleDraft>(
+  const res = await chatJson<unknown>(
     [
       sys(`你是小说编辑，帮作者把一本书的“写法”提炼成风格块。只描述怎么写：视角、语言质感、词汇质感、节奏、对白、基调、避免什么。
 绝不写人物名、情节、设定名词、桥段和套路，也不要引用原文句子。描述要具体到能照着写，比如“动作句多用单字动词”“心理活动借一个小动作带过”。
@@ -639,6 +640,7 @@ export async function describeStyle(title: string, metricsLine: string, samples:
     ],
     { temperature: 0.6 },
   );
+  return normDraft(res, "拆书风格");
 }
 
 export { leak };

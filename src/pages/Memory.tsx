@@ -323,12 +323,19 @@ function ResidentTab({ work }: { work: string }) {
   const [prefs] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [text, setText] = useState("");
   const [at, setAt] = useState(0);
+  // 这份摘要是按哪套写作规范拼的：作者手改后保存时照旧，点「重新拼」才换成当前的
+  const [sig, setSig] = useState<string | undefined>();
+  const sigRef = useRef(sig);
+  sigRef.current = sig;
+  const style = useStore((s) => s.style);
+  const stale = !!sig && sig !== mem.styleSig(compileStyle(style));
   const limit = residentLimitOf(prefs);
-  const mark = useSaveOnLeave(text, (t) => mem.saveResident(work, t, limit), "核心摘要");
+  const mark = useSaveOnLeave(text, (t) => mem.saveResident(work, t, limit, sigRef.current), "核心摘要");
   useEffect(() => {
     mem.getResident(work).then((r) => {
       setText(r?.text ?? "");
       setAt(r?.at ?? 0);
+      setSig(r?.style);
       mark(r?.text ?? "");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,7 +345,7 @@ function ResidentTab({ work }: { work: string }) {
       <h3>核心摘要 · 每次调用 AI 都会带上（{text.length} / {residentLimitOf(prefs)} 字）</h3>
       <textarea rows={18} value={text} onChange={(e) => setText(e.target.value)} placeholder="还没生成。可以点下面按需生成，或者等今晚的每日整理。" />
       <div className="addrow">
-        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, residentLimitOf(prefs)); mark(text); toast("已保存"); }}>
+        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, residentLimitOf(prefs), sig); mark(text); toast("已保存"); }}>
           保存
         </button>
         <button
@@ -346,14 +353,17 @@ function ResidentTab({ work }: { work: string }) {
           type="button"
           onClick={async () => {
             const s = useStore.getState();
-            const t = mem.buildResident(s.work!, s.chars, s.vols, s.events, compileStyle(s.style), await mem.items(work, 1), residentLimitOf(prefs));
+            const st = compileStyle(s.style);
+            const t = mem.buildResident(s.work!, s.chars, s.vols, s.events, st, await mem.items(work, 1), residentLimitOf(prefs));
             setText(t);
+            setSig(mem.styleSig(st));
             toast("已按当前数据重新拼了一份，记得保存");
           }}
         >
           按当前数据重新拼（不调 AI）
         </button>
       </div>
+      {stale && <p className="lint bad">风格或「我的规则」改过了，这份摘要里的写作规范是旧的，AI 现在改用按当前数据现拼的一份。点「按当前数据重新拼」后保存，或等今晚的每日整理。</p>}
       <p className="legend">{at ? `上次整理：${fmtTime(at)}。` : ""}一半写人物和写作规范（只缩不消失），一半写剧情事实和未收伏笔。你改过的内容会保留到下次 AI 整理。</p>
     </div>
   );

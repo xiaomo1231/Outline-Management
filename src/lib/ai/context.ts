@@ -24,13 +24,18 @@ export const NATURAL = `写法要求：
 - 句子长短要有变化，允许不完整的句子和口语。
 - 不要替作者推进大纲以外的剧情，不要新增设定。`;
 
-/** 核心摘要：有AI 整理整理过的就用它，没有就现场拼一份 */
+/**
+ * 核心摘要：有AI 整理整理过的就用它，没有就现场拼一份。
+ * 存好的摘要里带着当时的写作规范：风格或「我的规则」改过以后就过期了，也现场拼一份，
+ * 免得同一份提示词里新旧两套规范互相矛盾。下次每日整理或作者重新拼过保存后恢复用存的。
+ */
 export async function resident(c: Ctx): Promise<string> {
   const r = await mem.getResident(c.work.id);
-  if (r) return r.text;
+  const style = compileStyle(c.style);
+  if (r && (!r.style || r.style === mem.styleSig(style))) return r.text;
   const facts = await mem.items(c.work.id, 1);
   const limit = residentLimitOf(await repo.getSetting<Partial<MemPrefs>>("memory", {}));
-  return mem.buildResident(c.work, c.chars, c.vols, c.events, compileStyle(c.style), facts, limit);
+  return mem.buildResident(c.work, c.chars, c.vols, c.events, style, facts, limit);
 }
 
 /**

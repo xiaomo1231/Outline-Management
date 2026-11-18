@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type InputHTMLAttributes } from "react";
 import { useStore } from "../lib/store";
 import * as repo from "../lib/repo";
 import * as T from "../lib/ai/tasks";
@@ -26,15 +26,15 @@ export default function Style() {
         <div className="meta-row">
           <label>
             书名
-            <input value={work.name} onChange={(e) => save({ name: e.target.value })} />
+            <InfoInput value={work.name} ok={(v) => !!v.trim()} fix={() => "未命名作品"} save={(v) => save({ name: v })} />
           </label>
           <label>
             日更目标（字）
-            <input type="number" min={100} step={100} value={work.goal} onChange={(e) => save({ goal: +e.target.value })} />
+            <InfoInput type="number" min={100} step={100} value={work.goal} ok={(v) => +v >= 100} fix={(v) => String(Math.max(100, +v || 2000))} save={(v) => save({ goal: +v })} />
           </label>
           <label>
             每章大约（字）
-            <input type="number" min={500} step={100} value={work.chapWords} onChange={(e) => save({ chapWords: +e.target.value })} />
+            <InfoInput type="number" min={500} step={100} value={work.chapWords} ok={(v) => +v >= 500} fix={(v) => String(Math.max(500, +v || 2500))} save={(v) => save({ chapWords: +v })} />
           </label>
         </div>
         <label className="meta-col">
@@ -75,6 +75,31 @@ export default function Style() {
         <StyleBuilder value={style} onChange={(v) => edit("style", () => v)} />
       )}
     </section>
+  );
+}
+
+/**
+ * 书名、日更、每章字数：合格的值边打边存；离开输入框时不合格的改成合格值再存
+ * （和新建作品一样：书名为空用「未命名作品」，日更至少 100，每章至少 500）
+ */
+function InfoInput({ value, ok, fix, save, ...rest }: { value: string | number; ok: (v: string) => boolean; fix: (v: string) => string; save: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onBlur">) {
+  const [t, setT] = useState(String(value));
+  useEffect(() => setT(String(value)), [value]);
+  return (
+    <input
+      {...rest}
+      value={t}
+      onChange={(e) => {
+        setT(e.target.value);
+        if (ok(e.target.value)) save(e.target.value);
+      }}
+      onBlur={() => {
+        if (ok(t)) return;
+        const v = fix(t);
+        setT(v);
+        save(v);
+      }}
+    />
   );
 }
 

@@ -219,6 +219,16 @@ export interface Resident {
   text: string;
   at: number;
   limit: number;
+  /** 拼这份摘要时的写作规范指纹（styleSig）。老数据和作者手写的没有 */
+  style?: string;
+}
+
+/** 写进核心摘要的那段写作规范（去掉样章）的指纹：风格或「我的规则」改了就对不上 */
+export function styleSig(styleText: string): string {
+  const t = styleText.replace(/【作者样章[\s\S]*$/, "");
+  let h = 0;
+  for (let i = 0; i < t.length; i++) h = (Math.imul(h, 31) + t.charCodeAt(i)) | 0;
+  return t.length + ":" + (h >>> 0).toString(36);
 }
 
 /**
@@ -251,8 +261,8 @@ export async function getResident(work: Id): Promise<Resident | null> {
   const r = await repo.loadDoc<Resident | null>(work, "resident", null);
   return r && r.text ? r : null;
 }
-export async function saveResident(work: Id, text: string, limit: number) {
-  await repo.saveDoc(work, "resident", { text, at: Date.now(), limit } satisfies Resident);
+export async function saveResident(work: Id, text: string, limit: number, style?: string) {
+  await repo.saveDoc(work, "resident", { text, at: Date.now(), limit, ...(style ? { style } : {}) } satisfies Resident);
 }
 
 export interface Bible {

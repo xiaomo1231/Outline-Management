@@ -1,12 +1,14 @@
 import { GROUPS, fieldDef, fieldLabel, isLocked, SIMPLE } from "./charFields";
-import type { Character, CallEntry, Volume } from "./types";
+import type { Character, CallEntry, Scene, StoryEvent, Volume, WriteLimit } from "./types";
 import { allChapters, findChapter } from "./outline";
+import { cnToNum } from "./util";
 
 /** 人物在第 no 章时的状态：初始卡加上这一章及之前已生效的变化 */
 export function snapshot(c: Character, vols: Volume[], no: number): Record<string, string> {
   const f = { ...c.f };
   const chs = allChapters(vols);
-  const nOf = (id: string) => chs.find((x) => x.ch.id === id)?.no ?? 0;
+  // 挂的章已经不在了（老数据里删章后留下的）：不知道该从哪章起算，不生效，免得从第 1 章起就变了
+  const nOf = (id: string) => chs.find((x) => x.ch.id === id)?.no ?? Infinity;
   const list = (c.changes ?? []).filter((x) => x.status === "applied" && nOf(x.ch) <= no).sort((a, b) => nOf(a.ch) - nOf(b.ch) || a.at - b.at);
   for (const x of list) f[x.field] = x.to;
   return f;
@@ -18,8 +20,10 @@ export function hiddenAt(c: Character, k: string, no: number): boolean {
   if (d?.flag !== "hid") return false;
   const r = c.rev?.[k];
   if (!r || r.s === "未揭示") {
-    const m = r?.ch && /\d+/.exec(r.ch);
-    return !(m && +m[0] <= no);
+    // 「第10章」「第十章」都认
+    const m = r?.ch && /\d+|[零〇一二两三四五六七八九十百千万]+/.exec(r.ch);
+    const at = m ? (/\d/.test(m[0]) ? +m[0] : cnToNum(m[0])) : NaN;
+    return !(at <= no);
   }
   return false;
 }
@@ -37,7 +41,7 @@ export function describe(c: Character, vols: Volume[], no: number, opts: { forPr
     const flag = isLocked(c, k) ? "（锁定，不能写出矛盾，也不能改）" : d?.flag === "hid" && !opts.forProse ? `（${c.rev?.[k]?.s ?? "未揭示"}）` : "";
     lines.push(`${fieldLabel(k)}${flag}：${v}`);
   }
-  const knows = (c.knows ?? []).filter((x) => !x.ch || (findChapter(vols, x.ch)?.no ?? 0) <= no);
+  const knows = (c.knows ?? []).filter((x) => !x.ch || (findChapter(vols, x.ch)?.no ?? Infinity) <= no);
   if (knows.length) lines.push("已经知道：" + knows.map((x) => x.secret).join("；"));
   if (c.dead && (findChapter(vols, c.dead)?.no ?? Infinity) <= no) lines.push("状态：已死亡");
   return lines.join("\n");
@@ -98,4 +102,35 @@ export function ruleCheck(text: string, chars: Character[], calls: CallEntry[], 
     }
   }
   return out;
+}
+
+/** 名字列表里换一个名字（场景出场人物、写作限制管的人） */
+function swap(list: string[], from: string, to: string): string[] {
+  return list.includes(from) ? [...new Set(list.map((x) => (x === from ? to : x)))] : list;
+}
+
+/**
+ * 人物改名后，按名字引用他的地方跟着改：称呼表、场景出场人物和视角、事件人物、写作限制管的人。
+ * 改成空名字、或者别的人物还在用旧名字（重名）时不动，免得把别人的也改了。
+ */
+export function renameRefs(d: { chars: Character[]; vols: Volume[]; events: StoryEvent[]; calls: CallEntry[]; limits?: WriteLimit[] }, from: string, to: string) {
+  from = from.trim();
+  to = to.trim();
+  if (!from || !to || from === to || d.chars.some((c) => c.name.trim() === from)) return;
+  for (const e of d.calls) {
+    if (e.from === from) e.from = to;
+    if (e.to === from) e.to = to;
+  }
+  const scene = (s: Scene) => {
+    s.who = swap(s.who, from, to);
+    if (s.pov === from) s.pov = to;
+  };
+  d.vols.forEach((v) => v.chapters.forEach((ch) => ch.scenes.forEach(scene)));
+  for (const e of d.events)
+    if (e.who)
+      e.who = e.who
+        .split(/([、,，\s]+)/)
+        .map((x) => (x === from ? to : x))
+        .join("");
+  for (const l of d.limits ?? []) if (l.who?.names.includes(from)) l.who.names = swap(l.who.names, from, to);
 }
