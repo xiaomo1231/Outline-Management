@@ -138,9 +138,8 @@ export interface ContIssue {
 export async function checkContinuity(c: Ctx, r: ChRef, text: string): Promise<ContIssue[]> {
   if (!text.trim()) return [];
   const bible = await getBible(c.work.id);
-  const prev = allChapters(c.vols)
-    .filter((x) => x.no < r.no && x.no >= r.no - 6)
-    .map((x) => `第${x.no}章 ${x.ch.title}：${x.ch.summary || x.ch.scenes.map((s) => s.t).join("；") || "（无摘要）"}`);
+  // 前文：读归档（摘要、已做过的事、上一章原文），用来查跨章重复
+  const prior = await priorStory(c, r.no, { n: 6, tail: 4000, bible: false, ensure: true });
   const evs = c.events.filter((e) => e.ch === r.ch.id).map((e) => `第${e.day}天${e.time ? " " + e.time : ""}：${e.t}${e.place ? "（" + e.place + "）" : ""}`);
   const res = await chatJson<{ issues: ContIssue[] }>(
     [
@@ -148,15 +147,14 @@ export async function checkContinuity(c: Ctx, r: ChRef, text: string): Promise<C
       user(`检查第${r.no}章正文有没有和已有内容矛盾。人物性格另有检查，这里只看：
 1. 设定：世界观、能力体系、物品、地名、组织，和设定集或核心摘要冲突的。
 2. 时间线：和前几章、本章时间线事件对不上的时间、地点、先后顺序。
-3. 前文：和前几章已经发生的事冲突，例如已死的人出场、已用掉的东西又出现、重复交代。
+3. 前文：和前几章已经发生的事冲突，例如已死的人出场、已用掉的东西又出现；以及跨章重复：把「前几章已经做过、说过的事」和上一章正文里已经发生过的事又写了一遍（同一件事换个说法、换个场合再写也算），已经问过答过的话又问一遍，已经定下的安排又安排一遍。
 4. 伏笔：提前揭开还没到时候的伏笔，或者收了没埋过的伏笔。
 5. 写作限制：违反系统提示里「本书写作限制」的地方（用词、内容尺度、情节走向、人物言行、标点）。「一笔带过」的内容写了过程和细节也算；「尽量少用」的只在明显过多时报。
 
 设定集：
 ${clip(bible.text || "（还没有）", 6000)}
 
-前几章：
-${prev.join("\n") || "（没有）"}
+${prior.text || "前几章：（没有）"}
 
 本章时间线事件：
 ${evs.join("\n") || "（没有）"}
@@ -187,7 +185,7 @@ export interface ChangeOut {
 /* ---------- 大纲 ---------- */
 
 export async function splitScenes(c: Ctx, sentence: string, r: ChRef): Promise<Scene[]> {
-  const prior = await priorStory(c, r.no);
+  const prior = await priorStory(c, r.no, { ensure: true });
   const res = await chatJson<{ scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string }[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只给结构，不写正文和对白。", "plan")),
@@ -223,7 +221,7 @@ export async function splitVolume(c: Ctx, v: number, n: number): Promise<SplitCh
   const vol = c.vols[v];
   const chs = allChapters(c.vols).filter((r) => r.v === v);
   const firstNo = chs[0]?.no ?? allChapters(c.vols).filter((r) => r.v < v).length + 1;
-  const prior = await priorStory(c, firstNo);
+  const prior = await priorStory(c, firstNo, { ensure: true });
   const res = await chatJson<{ chapters: SplitChapter[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只给结构和情节走向，不写正文和对白。", "plan")),
@@ -248,7 +246,7 @@ ${chs.some((r) => r.ch.title || r.ch.ol || r.ch.scenes.length) ? "\n这一卷已
 }
 
 export async function fillScene(c: Ctx, r: ChRef, s: Scene): Promise<{ goal?: string; conf?: string }> {
-  const prior = await priorStory(c, r.no, { n: 3, bible: false });
+  const prior = await priorStory(c, r.no, { n: 3, bible: false, ensure: true });
   return chatJson(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只补空白，不改作者写的。", "plan")),
@@ -274,7 +272,7 @@ export interface AlignFix {
 export async function alignOutlines(c: Ctx, changedNo: number, what: string, written: Set<string>): Promise<AlignFix[]> {
   const later = allChapters(c.vols).filter((r) => r.no > changedNo && !written.has(r.ch.id)).slice(0, 10);
   if (!later.length) return [];
-  const prior = await priorStory(c, later[0].no);
+  const prior = await priorStory(c, later[0].no, { ensure: true });
   const res = await chatJson<{ chapters: AlignFix[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。作者改了前文，你帮他把后面的大纲对齐。只做必要的最小改动，保留作者原来的意图和写法。", "plan")),
@@ -441,7 +439,7 @@ ${sel}
 }
 
 export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string, after = ""): Promise<string> {
-  const ctx = r ? await chapterContext(c, r) : { text: "" };
+  const ctx = r ? await chapterContext(c, r, { full: op === "续写" }) : { text: "" };
   const res = await chat(
     [
       sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。", "prose", atOf(c, r))) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
@@ -454,7 +452,7 @@ export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel:
 
 /** 按大纲填充一章：逐个场景写，每个场景接着上一个 */
 export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: string) => void, onDelta: (t: string) => void, signal?: AbortSignal, existing = ""): Promise<string[]> {
-  const ctx = await chapterContext(c, r);
+  const ctx = await chapterContext(c, r, { full: true, onStep: (s) => onScene(0, s + "（整理完再写）") });
   const at = atOf(c, r);
   const prefix = (await stablePrefix(c, "你是作者的代笔。按大纲写正文，直接输出正文段落，不加标题和说明。", "prose", at)) + "\n\n=== 文风 ===\n" + compileStyle(c.style) + "\n\n" + NATURAL;
   const out: string[] = [];

@@ -10,7 +10,7 @@ import { phaseName } from "../plan";
 import { PATTERNS } from "../aiscan";
 import { limitsBlock, limitsTail, type LimitAt, type LimitTask } from "../limits";
 import { mentioned } from "../mention";
-import { archiveMap } from "./archive";
+import { archiveMap, ensureFresh } from "./archive";
 import { clip } from "../util";
 import { residentLimitOf, type MemPrefs } from "../hooks";
 
@@ -75,7 +75,7 @@ export async function recall(c: Ctx, keys: string[], limit = 12): Promise<MemIte
 }
 
 /** 写某一章需要的全部材料：按大纲提前召回 */
-export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; refs: string[] }> {
+export async function chapterContext(c: Ctx, r: ChRef, opts: { full?: boolean; onStep?: (s: string) => void } = {}): Promise<{ text: string; refs: string[] }> {
   const refs: string[] = [];
   const parts: string[] = [];
   const names = new Set<string>();
@@ -93,7 +93,8 @@ export async function chapterContext(c: Ctx, r: ChRef): Promise<{ text: string; 
     refs.push(...due.map((p) => "伏笔：" + p.name));
   }
   const keys = [...names, ...r.ch.scenes.flatMap((s) => [s.plant, s.pay, s.place || ""]), ...r.ch.scenes.flatMap((s) => words(s.t))];
-  const prior = await priorStory(c, r.no, { n: 5, tail: 800, names: keys });
+  // 整章生成、续写：先补齐前几章归档，上一章给多一些原文；Ctrl+Enter 这类快操作不等
+  const prior = await priorStory(c, r.no, { n: 5, tail: opts.full ? 6000 : 1500, names: keys, ensure: opts.full, onStep: opts.onStep });
   if (prior.text) {
     parts.push(prior.text);
     refs.push(...prior.refs);
@@ -125,15 +126,18 @@ export const NO_REPEAT = `同一章不重复的硬性要求：
 export const CONTINUE_RULE = `接上前文的硬性要求：
 - 新内容必须从上一章的章末状态接着往下走：每个人物此刻在哪、和谁在一起、在做什么、处境如何（受伤、被押送、被困、手里有什么），都要延续。
 - 例如上一章结尾主角正被两个人押送，下一章开头主角就仍在押送途中、押送他的人仍在身边；要改变这个局面，必须写出是怎么改变的（逃脱、被救、到达目的地等），不能当作没发生过。
-- 已经发生的事不要重写一遍，已经死去、离开的人不要无故出场，已经用掉的东西不要再出现。`;
+- 已经发生的事不要重写一遍，已经死去、离开的人不要无故出场，已经用掉的东西不要再出现。
+- 「前几章已经做过、说过的事」里列的事，一律不要再写一遍，也不要换个说法、换个场合再写一遍。前几章定下的安排，后文只能往后推进（例如说好两日后去取，后文就写去取、取回来之后），不能再安排一遍。
+- 前几章人物之间已经问过、答过、交代过的话，后文按已经知道来写，不能再问一遍、再交代一遍。`;
 
 /**
  * 写在某一章之前的“前文”：给大纲和正文任务用。
  * 读章节归档（摘要、章末状态），没归档的章退回用大纲和正文结尾；再加上最近一章正文的原文结尾、相关记忆和设定集。
  */
-export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: number; bible?: boolean; names?: string[] } = {}): Promise<{ text: string; refs: string[]; names: string[] }> {
+export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: number; bible?: boolean; names?: string[]; ensure?: boolean; onStep?: (s: string) => void } = {}): Promise<{ text: string; refs: string[]; names: string[] }> {
   const n = opts.n ?? 10;
-  const tail = opts.tail ?? 800;
+  const tail = opts.tail ?? 1500;
+  if (opts.ensure) await ensureFresh(c.work.id, no, 3, opts.onStep).catch(() => 0);
   const refs: string[] = [];
   const parts: string[] = [];
   const all = allChapters(c.vols);
@@ -166,11 +170,22 @@ export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: 
       parts.push(`=== 第${lastWritten.no}章结束时的局面（章末状态）===\n${a.end}`);
       refs.push(`第${lastWritten.no}章章末状态`);
     }
-    parts.push(`=== 第${lastWritten.no}章正文结尾原文 ===\n` + t.plain.slice(-tail));
+    const whole = t.plain.trim().length <= tail;
+    parts.push(`=== 第${lastWritten.no}章正文${whole ? "全文" : "（开头和后面的大段）"} ===\n` + (tail >= 3000 ? writtenSoFar(t.plain, tail) : t.plain.slice(-tail)));
     refs.push(`第${lastWritten.no}章结尾`);
     if (lastWritten.no < no - 1) parts.push(`（第${lastWritten.no + 1}–${no - 1}章还没写正文，以上面的大纲为准。）`);
     const endText = (a?.end ?? "") + t.plain.slice(-tail);
     c.chars.forEach((p) => p.name && endText.includes(p.name) && names.add(p.name));
+  }
+  // 最近 3 章已经做过、说过的事和新事实：跨章不重复全靠它
+  const recent = before.slice(-3).filter((x) => arcs.get(x.ch.id));
+  const doneLines = recent.flatMap((x) => {
+    const a = arcs.get(x.ch.id)!;
+    return [...(a.done ?? []), ...(a.facts ?? [])].map((d) => `[第${x.no}章] ${d}`);
+  });
+  if (doneLines.length) {
+    parts.push("=== 前几章已经做过、说过的事（不要再写一遍）===\n" + [...new Set(doneLines)].join("\n"));
+    refs.push(`第${recent[0].no}–${recent[recent.length - 1].no}章已做过的事`);
   }
   prev.slice(-2).forEach((x) => x.ch.scenes.forEach((s) => s.who.forEach((w) => names.add(w))));
   const rec = await recall(c, [...names], 10);
