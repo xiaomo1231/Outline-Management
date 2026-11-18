@@ -272,6 +272,8 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                                 e.dataTransfer.setData("text/plain", "s");
                                 setDrag({ k: "s", id: r.ch.id, s: si });
                               }}
+                              onDragOver={(e) => e.preventDefault()}
+                              onDragEnd={() => setDrag(null)}
                               onDrop={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
