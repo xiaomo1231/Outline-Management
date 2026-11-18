@@ -62,6 +62,45 @@ describe("M29 / M36 整组撤销：先撤旧的再撤新的", () => {
   });
 });
 
+describe("R1 整组撤销只连带会被盖掉的组", () => {
+  const vol = () => [{ id: "v", title: "一", chapters: [{ id: "c", title: "", status: "大纲", scenes: [] }] }] as any;
+  it("中间只动了别的数据的组不受影响", () => {
+    useStore.setState({ vols: vol(), events: [], changesets: [] });
+    const s = useStore.getState();
+    s.aiEdit("A", ["vols"], (d) => void d.vols[0].chapters[0].scenes.push({ t: "A" } as any));
+    s.aiEdit("B", ["events"], (d) => void d.events.push({ id: "eB" } as any));
+    s.aiEdit("C", ["vols", "events"], (d) => {
+      d.vols[0].chapters[0].scenes.push({ t: "C" } as any);
+      d.events.push({ id: "eC" } as any);
+    });
+    const [c, b, a] = useStore.getState().changesets;
+    useStore.getState().undoChange(a.id);
+    const st = useStore.getState();
+    expect(st.vols[0].chapters[0].scenes).toEqual([]);
+    expect(st.events.map((e) => e.id)).toEqual(["eB"]);
+    expect(st.changesets.find((x) => x.id === b.id)?.undone).toBeFalsy();
+    expect(st.changesets.find((x) => x.id === c.id)?.undone).toBe(true);
+  });
+  it("在连带组之后又动了同一份数据的组也一起撤", () => {
+    useStore.setState({ vols: vol(), events: [], changesets: [] });
+    const s = useStore.getState();
+    s.aiEdit("A", ["vols"], (d) => void d.vols[0].chapters[0].scenes.push({ t: "A" } as any));
+    s.aiEdit("C", ["vols", "events"], (d) => {
+      d.vols[0].chapters[0].scenes.push({ t: "C" } as any);
+      d.events.push({ id: "eC" } as any);
+    });
+    s.aiEdit("B", ["events"], (d) => void d.events.push({ id: "eB" } as any));
+    const [b, , a] = useStore.getState().changesets;
+    useStore.getState().undoChange(a.id);
+    const st = useStore.getState();
+    expect(st.events).toEqual([]);
+    expect(st.changesets.every((x) => x.undone)).toBe(true);
+    // 再撤 B 也不会复活
+    useStore.getState().undoChange(b.id);
+    expect(useStore.getState().events).toEqual([]);
+  });
+});
+
 describe("L47 模型返回的字段规整", () => {
   const c = { work: { id: "w" }, vols: [{ id: "v", title: "一", chapters: [{ id: "c", title: "甲", status: "大纲", scenes: [] }] }], chars: [], events: [], plan: [], style: emptySetup(), calls: [], changesets: [] } as any;
   const r = { v: 0, c: 0, no: 1, ch: c.vols[0].chapters[0] } as any;

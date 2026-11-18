@@ -201,25 +201,23 @@ export const useStore = create<State>((set, get) => ({
     const cs = all[idx];
     if (!cs || cs.undone) return;
     // 之后动过同一份数据的组会被一起回退，也要标成已撤销，否则再撤销它们会把这一组的改动复活。
-    // changesets 新的在前；每份数据取这批里最早那组的 before
+    // changesets 新的在前（下标越大越早）；每份数据退回这批里最早那组的 before。
+    // 只拉进「改动会被这次回退盖掉」的组：它动过的某份数据，要退回到比它更早的 before
     const group = new Set([id]);
-    const kinds = new Set(Object.keys(cs.before));
+    const oldest = new Map<string, number>(Object.keys(cs.before).map((k) => [k, idx]));
     for (let grew = true; grew; ) {
       grew = false;
-      for (const x of all.slice(0, idx)) {
-        if (group.has(x.id) || x.undone || !Object.keys(x.before).some((k) => kinds.has(k))) continue;
+      all.slice(0, idx).forEach((x, i) => {
+        if (group.has(x.id) || x.undone || !Object.keys(x.before).some((k) => (oldest.get(k) ?? -1) > i)) return;
         group.add(x.id);
-        Object.keys(x.before).forEach((k) => kinds.add(k));
+        for (const k of Object.keys(x.before)) if ((oldest.get(k) ?? -1) < i) oldest.set(k, i);
         grew = true;
-      }
+      });
     }
     const patch: Partial<WorkData> = {};
-    for (const x of all.slice(0, idx + 1).reverse()) {
-      if (!group.has(x.id)) continue;
-      for (const [kind, v] of Object.entries(x.before)) {
-        const key = (Object.keys(KIND) as DataKey[]).find((k) => KIND[k] === kind);
-        if (key && !(key in patch)) (patch as any)[key] = v;
-      }
+    for (const [kind, i] of oldest) {
+      const key = (Object.keys(KIND) as DataKey[]).find((k) => KIND[k] === kind);
+      if (key) (patch as any)[key] = all[i].before[kind as keyof ChangeSet["before"]];
     }
     set({ ...patch, changesets: all.map((x) => (group.has(x.id) ? { ...x, undone: true } : x)) });
     [...(Object.keys(patch) as DataKey[]), "changesets" as DataKey].forEach(scheduleSave);
