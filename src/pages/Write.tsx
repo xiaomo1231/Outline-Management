@@ -1,3 +1,4 @@
+import { mentioned } from "../lib/mention";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -402,8 +403,8 @@ export default function Write() {
 
   async function fill() {
     if (!editor || !cur) return;
-    if (!cur.ch.scenes.length) {
-      toast("这一章还没有场景大纲，先到大纲页拆场景");
+    if (!cur.ch.scenes.length && !cur.ch.ol?.trim()) {
+      toast("这一章还没有大纲，先到大纲页写本章大纲或拆场景");
       return;
     }
     abort.current?.abort();
@@ -481,7 +482,8 @@ export default function Write() {
   const scanRows = scanOn ? scan(plain, bans) : [];
   const rhythm = sentenceLengths(plain).slice(-80);
   const maxR = Math.max(10, ...rhythm);
-  const people = chars.filter((c) => c.name && (plain.includes(c.name) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
+  const olWho = mentioned(chars, plain + "\n" + (cur.ch.ol ?? ""));
+  const people = chars.filter((c) => c.name && (olWho.includes(c.name.trim()) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
   const open = plants(vols, events).filter((p) => p.plantNo && !p.payNo && p.plantNo <= cur.no);
   const aiTotal = ai[0] + ai[1];
   const fontList = [...SYSTEM_FONTS, ...prefs.fonts.map((f) => [`"${f.name}"`, f.name] as [string, string])];
@@ -543,7 +545,7 @@ export default function Write() {
                 "直接在纸上写，自动保存。左边是目录，右边是本章大纲、出场人物和 AI 面板。",
                 "卡住了按 Ctrl+Enter（或点「接下来怎么写」），AI 给三个接下来的写法，选一个插进去。",
                 "选中一段文字后点右键，可以让 AI 续写、扩写、改写、润色或改对白口吻。菜单顶上可以写一句要求（比如节奏放慢、多写心理），不写就按前文和大纲来。结果先出现在右边，确认后才写进正文。",
-                "本章已经有场景大纲时，可以点「按大纲生成草稿」先铺一版，再自己改。",
+                "本章写了大纲（拆不拆场景都行）时，可以点「按大纲生成草稿」先铺一版，再自己改。",
                 "浅黄底是 AI 写的字；每章都有「历史」，误删了能找回。",
               ]}
             />
@@ -792,10 +794,10 @@ export default function Write() {
                 ))}
               </ol>
             ) : (
-              <Empty>这一章还没有场景。到「大纲」页拆场景后，这里会列出来。</Empty>
+              <Empty>{cur.ch.ol?.trim() ? "这一章还没拆场景，生成草稿会按上面的本章大纲整章写。想分场景写，到「大纲」页拆场景。" : "这一章还没有场景。到「大纲」页拆场景后，这里会列出来。"}</Empty>
             )}
             <div className="addrow">
-              <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length}>
+              <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length && !cur.ch.ol?.trim()}>
                 按大纲生成草稿
               </button>
               <button className="btn" type="button" onClick={check} title="人物、设定、时间线、前文、伏笔、禁用清单">
@@ -816,7 +818,7 @@ export default function Write() {
                 </div>
               ))
             ) : (
-              <Empty>正文或场景里提到的人物会出现在这里。</Empty>
+              <Empty>正文、本章大纲或场景里提到的人物会出现在这里。</Empty>
             )}
             {open.length > 0 && (
               <>

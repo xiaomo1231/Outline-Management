@@ -9,6 +9,7 @@ import { useSetting } from "../../lib/hooks";
 import { AsyncButton, Empty, Field, Issue } from "../../components/ui";
 import type { Say } from "./Outline";
 import type { Scene } from "../../lib/types";
+import { addMentioned, mentioned, SCENE_TEXT, sceneText } from "../../lib/mention";
 import { ctx, names } from "./ctx";
 import { trashChapter, trashScene } from "../../lib/trash";
 import * as repo from "../../lib/repo";
@@ -92,7 +93,7 @@ function addFix(x: T.TidyIssue) {
   useStore.getState().aiEdit(`梳理大纲：第${x.add.chapter}章加场景`, ["vols"], (d) => {
     const r = allChapters(d.vols as any).find((y) => y.no === x.add!.chapter);
     if (!r) return;
-    d.vols[r.v].chapters[r.c].scenes.push({ ...newScene(x.add!.scene.t), goal: x.add!.scene.goal, conf: x.add!.scene.conf, who: x.add!.scene.who ?? [], plant: x.add!.scene.plant ?? "", pay: x.add!.scene.pay ?? "", ai: true });
+    d.vols[r.v].chapters[r.c].scenes.push({ ...newScene(x.add!.scene.t), goal: x.add!.scene.goal, conf: x.add!.scene.conf, who: [...new Set([...(x.add!.scene.who ?? []), ...mentioned(useStore.getState().chars, [x.add!.scene.t, x.add!.scene.goal, x.add!.scene.conf].join("\n"))])], plant: x.add!.scene.plant ?? "", pay: x.add!.scene.pay ?? "", ai: true });
   });
 }
 
@@ -357,7 +358,19 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const setSc = (k: keyof Scene, v: any) =>
     editMany(["vols", "events"], (d) => {
       const sc = d.vols[r.v].chapters[r.c].scenes[sel.s] as any;
-      sc[k] = v;
+      // 改场景大纲时，按文字里新提到的人名（含别名）自动勾上出场人物
+      if ((SCENE_TEXT as readonly string[]).includes(k as string)) {
+        const before = sceneText(sc);
+        sc[k] = v;
+        const who = addMentioned(sc.who, chars, before, sceneText(sc));
+        if (who !== sc.who) {
+          sc.who = who;
+          if (sc.ev) {
+            const e = d.events.find((x) => x.id === sc.ev) as any;
+            if (e) e.who = who.join("、");
+          }
+        }
+      } else sc[k] = v;
       // 已关联的事件保持一致
       if ((SHARE as readonly string[]).includes(k as string) && sc.ev) {
         const e = d.events.find((x) => x.id === sc.ev) as any;
@@ -441,6 +454,21 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
                 </label>
               ))}
               {!nm.length && <span className="src">先到「人物」里加人物</span>}
+              {nm.length > 0 && (
+                <button
+                  className="btn sm"
+                  type="button"
+                  title="按本场景的标题、目标、冲突等文字里出现的人名和别名勾选；写大纲时也会自动勾上新提到的人"
+                  onClick={() => {
+                    const add = mentioned(chars, sceneText(s) + "\n" + (r.ch.scenes.length === 1 ? r.ch.ol ?? "" : "")).filter((n) => !s.who.includes(n));
+                    if (!add.length) return toast("大纲里没认出新的人物");
+                    setSc("who", [...s.who, ...add]);
+                    toast(`已勾上：${add.join("、")}`);
+                  }}
+                >
+                  按大纲识别
+                </button>
+              )}
             </div>
             {s.who.filter((n) => n && !nm.includes(n)).length > 0 && (
               <div className="addrow" style={{ marginTop: 4 }}>
@@ -733,7 +761,7 @@ function SplitPreview({ vi, list, tl, done }: { vi: number; list: T.SplitChapter
           let res = { filled: 0, added: 0, scenes: 0 };
           const v = useStore.getState().vols[vi];
           useStore.getState().aiEdit(`拆卷大纲：${v?.title ?? ""}`, ["vols", "events"], (d) => {
-            res = applyVolumeSplit(d.vols as any, d.events as any, vi, list.map((x, i) => (on[i] ? x : null)), tl);
+            res = applyVolumeSplit(d.vols as any, d.events as any, vi, list.map((x, i) => (on[i] ? x : null)), tl, useStore.getState().chars);
           });
           toast(`已写进大纲：补全 ${res.filled} 章，新建 ${res.added} 章`);
           done(

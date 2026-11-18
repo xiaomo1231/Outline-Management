@@ -423,6 +423,25 @@ export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: 
   const ctx = await chapterContext(c, r);
   const prefix = (await stablePrefix(c, "你是作者的代笔。按大纲写正文，直接输出正文段落，不加标题和说明。")) + "\n\n=== 文风 ===\n" + compileStyle(c.style) + "\n\n" + NATURAL;
   const out: string[] = [];
+  // 没拆场景、只有一段章大纲时，按整章大纲一次写完
+  if (!r.ch.scenes.length) {
+    if (!r.ch.ol?.trim()) return out;
+    onScene(0, "整章");
+    const res = await chat(
+      [
+        sys(prefix),
+        user(`${ctx.text}
+
+本章大纲：
+${outlineOf(c, r)}
+
+这是本章开头。按上面的本章大纲写完整一章，约 ${c.work.chapWords || 3000} 字。大纲里的情节都要写到，写到本章结束为止，不要写下一章。`),
+      ],
+      { model: "write", onDelta, signal, temperature: 1.0 },
+    );
+    out.push(res.content.trim());
+    return out;
+  }
   const per = Math.round((c.work.chapWords || 3000) / Math.max(1, r.ch.scenes.length));
   for (let i = 0; i < r.ch.scenes.length; i++) {
     if (signal?.aborted) break;
