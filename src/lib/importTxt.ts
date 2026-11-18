@@ -5,10 +5,38 @@ const CHAP = new RegExp(`^\\s*(第${NUM}[章回节]|楔子|引子|序章|序言|
 // 「第一章雾港」：章号后面直接接章名，章名要短、不带句读，免得把正文句子当成标题
 const CHAP_TIGHT = new RegExp(`^\\s*(第${NUM}[章回节])([^\\s:：·.、，。！？；…,!?;“”"「」]{1,20})\\s*$`);
 
-/** 认章节标题：返回章号部分和章名 */
-function chapOf(line: string): { head: string; name: string } | null {
-  const m = CHAP.exec(line) ?? CHAP_TIGHT.exec(line);
+// 「第一章完」「第三章终」这类章末标记，不是标题
+const CHAP_END = /^(?:完|终|完结|结束|完毕)$/;
+
+/** 认章节标题：返回章号部分和章名。tight 是这本书允许的紧凑写法所用的「章/回/节」字，null 表示不认紧凑写法 */
+function chapOf(line: string, tight: string | null): { head: string; name: string } | null {
+  let m = CHAP.exec(line);
+  if (!m && tight) {
+    const t = CHAP_TIGHT.exec(line);
+    if (t && t[1].trim().endsWith(tight) && !CHAP_END.test(t[2])) m = t;
+  }
   return m ? { head: m[1].trim(), name: (m[2] ?? "").trim() } : null;
+}
+
+/** 「第一章雾港」这种紧凑写法只认全书标题最常用的那个「章/回/节」字（有「第X章 章名」就按它们算），
+ *  免得「第一章 雾港」的书里单独一行的「第三节课」被切成一章 */
+function tightOf(lines: string[]): string | null {
+  const loose = new Map<string, number>();
+  const tight = new Map<string, number>();
+  const add = (mp: Map<string, number>, h: string) => mp.set(h.slice(-1), (mp.get(h.slice(-1)) ?? 0) + 1);
+  for (const l of lines) {
+    const m = CHAP.exec(l);
+    if (m) {
+      if (/^第/.test(m[1].trim())) add(loose, m[1].trim());
+      continue;
+    }
+    const t = CHAP_TIGHT.exec(l);
+    if (t && !CHAP_END.test(t[2])) add(tight, t[1].trim());
+  }
+  const mp = loose.size ? loose : tight;
+  let best: string | null = null;
+  for (const [k, n] of mp) if (!best || n > mp.get(best)!) best = k;
+  return best;
 }
 
 export interface ParsedBook {
@@ -19,6 +47,7 @@ export interface ParsedBook {
 
 export function parseBook(raw: string): ParsedBook {
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
+  const tight = tightOf(lines);
   const vols: ParsedBook["vols"] = [];
   let pre: string[] = [];
   let ch: { title: string; lines: string[]; num: boolean } | null = null;
@@ -49,7 +78,7 @@ export function parseBook(raw: string): ParsedBook {
   };
   for (const line of lines) {
     const v = VOL.exec(line);
-    const c = chapOf(line);
+    const c = chapOf(line, tight);
     if (v && !c) {
       close();
       flushVolPre();
@@ -105,7 +134,8 @@ export function plainOf(text: string): string {
 export function guessMeta(raw: string, preface: string): { name: string; author: string; intro: string; rest: string } {
   const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   // 只看第一个卷章标题之前的行，免得把正文里的《某书》当成书名
-  const stop = lines.findIndex((l) => chapOf(l) || VOL.test(l));
+  const tight = tightOf(lines);
+  const stop = lines.findIndex((l) => chapOf(l, tight) || VOL.test(l));
   const head = (stop < 0 ? lines : lines.slice(0, stop)).slice(0, 15).map((x) => x.trim()).filter(Boolean);
   let name = "";
   let nameLine = "";

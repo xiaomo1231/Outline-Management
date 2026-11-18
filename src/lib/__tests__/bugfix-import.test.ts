@@ -112,3 +112,24 @@ describe("作品包", () => {
     expect(isPack(null)).toBeFalsy();
   });
 });
+
+describe("R1 紧凑章名不误切正文", () => {
+  it("单独一行的「第一章完」留在正文里", () => {
+    const b = parseBook("第一章 雾港\n正文一\n第一章完\n第二章 夜雨\n正文二");
+    expect(b.vols[0].chapters.map((c) => c.title)).toEqual(["雾港", "夜雨"]);
+    expect(b.vols[0].chapters[0].text).toBe("正文一\n第一章完");
+  });
+  it("单独一行的「第三节课」留在正文里", () => {
+    const b = parseBook("第一章 雾港\n他走进教室。\n第三节课\n老师来了。");
+    expect(b.vols[0].chapters.map((c) => c.title)).toEqual(["雾港"]);
+    expect(b.vols[0].chapters[0].text).toBe("他走进教室。\n第三节课\n老师来了。");
+  });
+  it("全书紧凑写法时章末的「第一章完」不切章", () => {
+    const b = parseBook("第一章雾港\n内容A\n第一章完\n第二章夜雨\n内容B");
+    expect(b.vols[0].chapters.map((c) => c.title)).toEqual(["雾港", "夜雨"]);
+  });
+  it("空格和紧凑写法混用仍能切开", () => {
+    const b = parseBook("第一章 雾港\n内容A\n第二章夜雨\n内容B");
+    expect(b.vols[0].chapters.map((c) => c.title)).toEqual(["雾港", "夜雨"]);
+  });
+});
