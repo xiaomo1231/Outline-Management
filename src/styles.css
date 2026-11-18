@@ -560,3 +560,4 @@ table.lanes tbody th{white-space:nowrap;text-align:left;position:sticky;left:0;b
 .route li.next{font-weight:600}
 .route .tick{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);font-size:11px}
 .route li.done .tick{background:var(--accent);color:#fff;border-color:var(--accent);text-decoration:none}
+#editor .sel-keep{background:Highlight;color:HighlightText}
