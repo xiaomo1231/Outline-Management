@@ -561,3 +561,5 @@ table.lanes tbody th{white-space:nowrap;text-align:left;position:sticky;left:0;b
 .route .tick{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);font-size:11px}
 .route li.done .tick{background:var(--accent);color:#fff;border-color:var(--accent);text-decoration:none}
 #editor .sel-keep{background:Highlight;color:HighlightText}
+#editor.ai-off .ai,#editor.ai-off span.aied{background:none;border-bottom:none}
+.ai-mark-tg{display:inline-flex;align-items:center;gap:4px;cursor:pointer}

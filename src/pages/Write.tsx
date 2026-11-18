@@ -10,7 +10,7 @@ import { Guide } from "../components/Guide";
 import { useStore, toast, registerFlush } from "../lib/store";
 import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraft, type Snap } from "../lib/chapterSave";
 import { diffText } from "../lib/diff";
-import { loadInto, publishText } from "../lib/editorText";
+import { loadInto, publishText, setDoc } from "../lib/editorText";
 import * as repo from "../lib/repo";
 import { allChapters, findChapter, newChapter, plants } from "../lib/outline";
 import { countWords, debounce, fmtHM, fmtTime, htmlToText, today, uid } from "../lib/util";
@@ -451,7 +451,7 @@ export default function Write() {
     if (!editor || !loadedFor.current) return;
     if (!confirm(`用 ${fmtTime(v.at)} 的版本（${v.words} 字）替换本章？当前内容会先留一份快照。`)) return;
     const kept = await snapshot(work.id, loadedFor.current, snapOf(editor), "恢复旧版前");
-    editor.commands.setContent(v.html, true);
+    setDoc(editor, v.html, true);
     await save.flush(loadedFor.current, editor);
     setPanel({ kind: "hist", list: await repo.listVersions(loadedFor.current), sel: null });
     toast(kept ? "已恢复。想反悔的话，历史里有一份「恢复旧版前」" : "已恢复");
@@ -672,6 +672,7 @@ export default function Write() {
             </div>
             <div
               id="editor"
+              className={prefs.aiMark ? undefined : "ai-off"}
               style={{ fontFamily: prefs.font, fontSize: prefs.size, lineHeight: prefs.lineHeight, ["--indent" as any]: prefs.indent ? "2em" : "0" }}
               onContextMenu={(e) => {
                 // 按住 Shift 右键还是系统菜单
@@ -737,6 +738,9 @@ export default function Write() {
               本章 AI 占比 <b>{chWords ? Math.round((aiTotal / chWords) * 100) : 0}%</b>
               {ai[1] ? `（其中 ${Math.round((ai[1] / Math.max(1, chWords)) * 100)}% 你改过）` : ""}
             </span>
+            <label className="ai-mark-tg" title="关掉只是不显示浅黄底和虚线，AI 写的字照样记录，AI 占比照常计算">
+              <input type="checkbox" checked={prefs.aiMark} onChange={(e) => set({ aiMark: e.target.checked })} /> 显示 AI 标记
+            </label>
           </div>
         </div>
 

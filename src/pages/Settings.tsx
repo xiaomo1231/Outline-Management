@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
 import { DEFAULT_AI, listModels, chat, errText, type AiSettings } from "../lib/ai/client";
-import { MEM_DEFAULT, RESIDENT_MAX, RESIDENT_MIN, residentLimitOf, useSetting, type MemPrefs } from "../lib/hooks";
+import { EDITOR_DEFAULT, MEM_DEFAULT, RESIDENT_MAX, RESIDENT_MIN, residentLimitOf, useSetting, type EditorPrefs, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
 import { AsyncButton, Empty } from "../components/ui";
@@ -14,6 +14,7 @@ import { useStore } from "../lib/store";
 export default function Settings() {
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
   const [memp, setMemp] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
+  const [edp, setEdp, edpReady] = useSetting<EditorPrefs>("editor", EDITOR_DEFAULT);
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -163,6 +164,18 @@ export default function Settings() {
             </span>
           </label>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3>写作</h3>
+        <label className="check">
+          <span>
+            <input type="checkbox" checked={edp.aiMark} disabled={!edpReady} onChange={(e) => setEdp({ ...edp, aiMark: e.target.checked })} /> 正文里显示 AI 标记（浅黄底是 AI 原样写的，虚线是 AI 写后你改过的）
+          </span>
+        </label>
+        <p className="legend" style={{ margin: "6px 0 0" }}>
+          关掉只是不显示，AI 写的字照样记录，写作页底部的「本章 AI 占比」照常计算。写作页底部也有同样的开关。
+        </p>
       </div>
 
       <div className="panel">

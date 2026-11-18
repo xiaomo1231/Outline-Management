@@ -36,8 +36,10 @@ export interface EditorPrefs {
   indent: boolean;
   gap: number;
   fonts: { name: string; path: string }[];
+  /** 正文里显示 AI 标记（浅黄底、虚线）。关掉只是不显示，照样记录、照样算 AI 占比 */
+  aiMark: boolean;
 }
-export const EDITOR_DEFAULT: EditorPrefs = { font: "var(--f-body)", size: 18, lineHeight: 1.9, paper: "plain", width: 38, indent: true, gap: 0.6, fonts: [] };
+export const EDITOR_DEFAULT: EditorPrefs = { font: "var(--f-body)", size: 18, lineHeight: 1.9, paper: "plain", width: 38, indent: true, gap: 0.6, fonts: [], aiMark: true };
 
 export interface MemPrefs {
   dailyAt: string;
