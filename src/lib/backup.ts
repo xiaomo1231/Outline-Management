@@ -148,7 +148,8 @@ export async function pullChapter(name: string, work: string, ch: string): Promi
 
 const TABLES = ["works", "docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive", "settings", "usage"];
 
-type TableData = { t: string; cols: string[]; rows: Record<string, unknown>[] };
+/** has：备份里有没有这张表 */
+type TableData = { t: string; cols: string[]; rows: Record<string, unknown>[]; has?: boolean };
 type Reader = { all(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
 
 /** 把备份里每张表（只取现在的库也有的列）整个读出来。备份损坏会在这一步报错，现在的库还没动 */
@@ -159,12 +160,12 @@ export async function readTables(src: Reader, db: Db): Promise<TableData[]> {
     if (!mine.length) continue;
     const has = (await src.all(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [t])).length > 0;
     if (!has) {
-      out.push({ t, cols: mine, rows: [] });
+      out.push({ t, cols: mine, rows: [], has: false });
       continue;
     }
     const theirs = (await src.all(`PRAGMA table_info(${t})`)).map((x) => String(x.name));
     const cols = mine.filter((c) => theirs.includes(c));
-    out.push({ t, cols, rows: cols.length ? await src.all(`SELECT ${cols.join(",")} FROM ${t}`) : [] });
+    out.push({ t, cols, rows: cols.length ? await src.all(`SELECT ${cols.join(",")} FROM ${t}`) : [], has: true });
   }
   return out;
 }
@@ -179,6 +180,38 @@ async function writeTables(db: Db, data: TableData[], onStep?: (s: string) => vo
   }
 }
 
+/** 整库替换的一整段 SQL：挂上备份文件，在一个事务里逐表清空、再从备份整表复制，最后提交。
+ *  SQL 插件用的是连接池，分几次调用的 BEGIN…COMMIT 不保证落在同一条连接上，所以必须一次交给数据库执行。
+ *  这样中途关窗、进程退出时，SQLite 下次打开会把没提交的事务退回去，库保持原样 */
+export function restoreSql(file: string, as: string, data: TableData[]): string {
+  const out = [`ATTACH DATABASE '${file.replace(/'/g, "''")}' AS ${as}`, `BEGIN IMMEDIATE`];
+  for (const { t, cols, has } of data) {
+    out.push(`DELETE FROM main.${t}`);
+    // OR ROLLBACK：备份里有坏行（必填值为空等）时整个事务立刻退回，不会留下没结束的事务
+    if (has !== false && cols.length) out.push(`INSERT OR ROLLBACK INTO main.${t}(${cols.join(",")}) SELECT ${cols.join(",")} FROM ${as}.${t}`);
+  }
+  out.push(`COMMIT`, `DETACH DATABASE ${as}`);
+  return out.join(";\n");
+}
+
+/** 在一个事务里把整库换成备份文件的内容，换完核对每张表的行数 */
+async function swapInTx(db: Db, file: string, data: TableData[]) {
+  const as = "bk" + Date.now().toString(36);
+  try {
+    await db.exec(restoreSql(file, as, data));
+  } catch (e) {
+    // 出错的那条连接上可能还留着没结束的事务和挂着的备份。连接池轮流给出空闲连接，多试几次总能轮到它
+    for (let i = 0; i < 12; i++) await db.exec(`ROLLBACK`).catch(() => {});
+    for (let i = 0; i < 12; i++) await db.exec(`DETACH DATABASE ${as}`).catch(() => {});
+    throw e;
+  }
+  for (const { t, cols, rows, has } of data) {
+    const n = Number((await db.all<{ n: number }>(`SELECT count(*) AS n FROM ${t}`))[0]?.n ?? 0);
+    const want = has !== false && cols.length ? rows.length : 0;
+    if (n !== want) throw new Error(`${t} 恢复后有 ${n} 行，备份里是 ${want} 行`);
+  }
+}
+
 /** 恢复中途出错。dirty 表示没能退回原样，库里可能一半新一半旧 */
 export class RestoreError extends Error {
   constructor(msg: string, public dirty: boolean) {
@@ -186,17 +219,22 @@ export class RestoreError extends Error {
   }
 }
 
-/** 用读好的备份数据替换现在的库。中途出错时把恢复前的数据写回去，尽量做到要么全换、要么不动 */
-export async function replaceTables(db: Db, data: TableData[], onStep?: (s: string) => void, pre = ""): Promise<void> {
+/** 用读好的备份数据替换现在的库。给了 file（备份文件路径）就在一个事务里整库替换；
+ *  中途出错时把恢复前的数据写回去，做到要么全换、要么不动 */
+export async function replaceTables(db: Db, data: TableData[], onStep?: (s: string) => void, pre = "", file?: string): Promise<void> {
   // 先把现在的库整个记下来，出错时退回
   const old = await readTables(db, db);
   try {
-    await writeTables(db, data, onStep);
+    if (file) {
+      onStep?.("替换数据……");
+      await swapInTx(db, file, data);
+    } else await writeTables(db, data, onStep);
   } catch (e: any) {
     const why = e?.message || String(e);
     onStep?.("恢复出错，正在退回恢复前的数据……");
     try {
-      await writeTables(db, old);
+      // 事务已经整个退回时库和恢复前一模一样，不用再写
+      if (JSON.stringify(await readTables(db, db)) !== JSON.stringify(old)) await writeTables(db, old);
     } catch {
       throw new RestoreError(`恢复中途出错（${why}），也没能退回原样。请到「备份与恢复」里整库恢复${pre ? ` ${pre} 的` : "最上面"}那份（恢复前自动备份的）。`, true);
     }
@@ -204,8 +242,22 @@ export async function replaceTables(db: Db, data: TableData[], onStep?: (s: stri
   }
 }
 
-/** 整库恢复：先给现在的库备份一份，把备份整个读出来，再替换每张表。之后要重新加载页面 */
-export async function restoreAll(name: string, onStep?: (s: string) => void): Promise<void> {
+let busy: Promise<void> | null = null;
+/** 正在整库恢复、或恢复完正等重新加载时返回它。这期间界面手里是恢复前的旧数据，不能再写库 */
+export const restoring = () => busy;
+
+/** 整库恢复：先给现在的库备份一份，把备份整个读出来，再在一个事务里替换每张表。之后要重新加载页面 */
+export function restoreAll(name: string, onStep?: (s: string) => void): Promise<void> {
+  const p = doRestore(name, onStep);
+  busy = p;
+  // 失败但库没动时，界面的数据还能接着用
+  p.catch((e) => {
+    if (!(e instanceof RestoreError && e.dirty) && busy === p) busy = null;
+  });
+  return p;
+}
+
+async function doRestore(name: string, onStep?: (s: string) => void): Promise<void> {
   onStep?.("先给现在的数据备份一份……");
   const pre = await backup({ prune: false });
   if (pre.startsWith("备份失败")) throw new Error("恢复前的备份没成功，停止恢复：" + pre);
@@ -221,7 +273,9 @@ export async function restoreAll(name: string, onStep?: (s: string) => void): Pr
   } finally {
     await b.close();
   }
-  await replaceTables(db, data, onStep, latest ? fmtTime(latest.at) : "");
+  const { join } = await import("@tauri-apps/api/path");
+  const bdir = await backupDir();
+  await replaceTables(db, data, onStep, latest ? fmtTime(latest.at) : "", bdir ? await join(bdir, name) : undefined);
 }
 
 /** 启动时检查数据库是否完好。返回 null 表示没问题 */

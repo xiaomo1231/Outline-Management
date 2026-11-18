@@ -210,6 +210,10 @@ function useScheduler(workId: string | null) {
         const s = useStore.getState();
         const t0 = Date.now();
         const finish = async () => {
+          // 正在整库恢复、或刚恢复完等重新加载：界面手里是恢复前的旧数据，不能再存盘、整理，等恢复跑完直接关
+          // （20 秒没跑完就关窗也不怕：恢复在一个事务里，没提交的部分下次打开会被退回）
+          const r = bk.restoring();
+          if (r) return void (await r.catch(() => {}));
           await s.flushSaves();
           if (s.work) await mem.scriptRun(s.work, s.vols);
           // 没打开书、或整理正在跑被跳过时，scriptRun 不会备份，这里补一份
