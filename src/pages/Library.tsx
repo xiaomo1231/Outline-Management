@@ -38,6 +38,9 @@ export default function Library() {
     })();
   }, [works]);
 
+  // 开头那段导入成「引子」时，它占第 1 章
+  const restCh = txt?.restAsChapter && txt.rest.trim() ? 1 : 0;
+
   return (
     <section className="view">
       <div className="lib-head">
@@ -86,11 +89,22 @@ export default function Library() {
           <p className="legend">
             认出 {txt.book.vols.length} 卷、{txt.book.vols.reduce((a, v) => a + v.chapters.length, 0)} 章，共 {txt.book.vols.reduce((a, v) => a + v.chapters.reduce((b, c) => b + countWords(c.text), 0), 0).toLocaleString()} 字。章节是按「第X章」这样的标题切的，切得不对可以导入后在大纲里调。
           </p>
+          {txt.rest.trim() && (
+            <label className="legend">
+              <input type="checkbox" checked={txt.restAsChapter} onChange={(e) => setTxt({ ...txt, restAsChapter: e.target.checked })} /> 第一章前面还有 {countWords(txt.rest).toLocaleString()} 字没归到任何章（现在只拿来当简介，简介最多 300 字）。勾上就把这段也导入成开头一章「引子」。
+            </label>
+          )}
           <div className="txt-chs">
             {txt.book.vols.map((v, vi) => (
               <div key={vi}>
                 <b>{v.title}</b>
-                <ol>
+                {/* 和导入后一样全书连续编号 */}
+                <ol start={1 + (vi > 0 ? restCh : 0) + txt.book.vols.slice(0, vi).reduce((a, x) => a + x.chapters.length, 0)}>
+                  {vi === 0 && restCh > 0 && (
+                    <li>
+                      引子 <small>{countWords(txt.rest).toLocaleString()} 字</small>
+                    </li>
+                  )}
                   {v.chapters.slice(0, 200).map((c, ci) => (
                     <li key={ci}>
                       {c.title || "（无题）"} <small>{countWords(c.text).toLocaleString()} 字</small>

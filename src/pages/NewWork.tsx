@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useStore } from "../lib/store";
 import StyleBuilder from "../components/StyleBuilder";
 import { emptySetup } from "../lib/style";
@@ -22,29 +22,56 @@ export default function NewWork() {
   const [style, setStyle] = useState<StyleSetup>(emptySetup());
 
   const info = () => ({ name: name.trim() || "未命名作品", intro: intro.trim(), goal: Math.max(100, goal || 2000), chapWords: Math.max(500, chapWords || 2500) });
+  // 建书只建一次：连点「下一步」时第二次等第一次建好的那本
+  const creating = useRef<Promise<string> | null>(null);
+  function ensureWork(): Promise<string> {
+    if (!creating.current) {
+      creating.current = createWork(info(), { style, vols: [{ id: uid("v"), title: "第一卷", chapters: [newChapter("")] }], chars: [{ id: uid("p"), role: "主角", name: "", f: {} }, { id: uid("p"), role: "配角", name: "", f: {} }] });
+      creating.current.then(setWorkId, () => (creating.current = null));
+    }
+    return creating.current;
+  }
+  const createdId = () => creating.current ?? Promise.resolve(null);
 
   // 离开第一步就先把书建好，中途关掉也不会丢
   async function leaveStep1() {
-    if (!workId) {
-      const id = await createWork(info(), { style, vols: [{ id: uid("v"), title: "第一卷", chapters: [newChapter("")] }], chars: [{ id: uid("p"), role: "主角", name: "", f: {} }, { id: uid("p"), role: "配角", name: "", f: {} }] });
-      setWorkId(id);
-    } else await saveInfo(workId);
+    const id = await createdId();
+    if (!id) await ensureWork();
+    else await saveInfo(id);
     setStep(2);
   }
   async function saveInfo(id: string) {
     const w = (await repo.listWorks()).find((x) => x.id === id);
     if (w) await repo.saveWork({ ...w, ...info(), updated: Date.now() });
+    // 作品库卡片读的是 store 里的列表，跟着刷新
+    await useStore.getState().loadWorks();
   }
   async function toStep3(s: StyleSetup = style) {
-    if (workId) await repo.saveDoc(workId, "style", s);
+    const id = await createdId();
+    if (id) await repo.saveDoc(id, "style", s);
     hasKey().then(setKeyOk, () => setKeyOk(false));
     setStep(3);
   }
+  // 跳过：组件里的风格也清空，后面「进入写作」「现在去填」才不会把搭过的风格又写回去
+  function skipStyle() {
+    const s = emptySetup();
+    setStyle(s);
+    void toStep3(s);
+  }
+  // 回书架前把当前填的信息和风格存下来
+  async function backToShelf() {
+    const id = await createdId();
+    if (id) {
+      await saveInfo(id);
+      await repo.saveDoc(id, "style", style);
+    }
+    go("library");
+  }
 
   async function finish(page: "write" | "outline") {
-    let id = workId;
+    let id = await createdId();
     if (!id) {
-      id = await createWork(info(), { style, vols: [{ id: uid("v"), title: "第一卷", chapters: [newChapter("")] }], chars: [{ id: uid("p"), role: "主角", name: "", f: {} }, { id: uid("p"), role: "配角", name: "", f: {} }] });
+      id = await ensureWork();
     } else {
       await saveInfo(id);
       await repo.saveDoc(id, "style", style);
@@ -72,7 +99,7 @@ export default function NewWork() {
         <Step n={2} t="搭建风格" />
         <span className="arrow">→</span>
         <Step n={3} t="进入写作" />
-        <button className="btn" type="button" style={{ marginLeft: "auto" }} onClick={() => go("library")}>
+        <button className="btn" type="button" style={{ marginLeft: "auto" }} onClick={() => void backToShelf()}>
           {workId ? "先回书架（书已保存）" : "取消"}
         </button>
       </div>
@@ -110,7 +137,7 @@ export default function NewWork() {
             <button className="btn" type="button" onClick={() => setStep(1)}>
               上一步
             </button>
-            <button className="btn" type="button" onClick={() => void toStep3(emptySetup())}>
+            <button className="btn" type="button" onClick={skipStyle}>
               跳过，用默认风格
             </button>
             <button className="btn primary" type="button" onClick={() => void toStep3()}>
@@ -124,7 +151,7 @@ export default function NewWork() {
         <div className="panel" style={{ maxWidth: 560 }}>
           <h3>准备好了</h3>
           <p>
-            《{name || "未命名作品"}》，日更 {goal} 字，每章约 {chapWords} 字。书已经存好了，风格以后随时可以在「风格」页改。
+            《{info().name}》，日更 {info().goal} 字，每章约 {info().chapWords} 字。书已经存好了，风格以后随时可以在「风格」页改。
           </p>
           {!keyOk && (
             <p className="hint">

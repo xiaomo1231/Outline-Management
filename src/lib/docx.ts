@@ -6,7 +6,8 @@ export interface DocBlock {
   text: string;
 }
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// XML 1.0 不允许换页符、\u0001 这类控制字符，留着 Word 会说文件损坏
+const esc = (s: string) => s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 function para(b: DocBlock): string {
   const t = `<w:t xml:space="preserve">${esc(b.text)}</w:t>`;

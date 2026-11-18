@@ -398,9 +398,9 @@ input.chap-title:focus{border-bottom-color:var(--line);outline:none}
 .lib-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
 .lib-head h2{margin:0;font-size:18px}
 .works{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-.work-card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px}
-.work-card h3{margin:0;font-family:var(--f-body);font-size:18px}
-.work-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+.work-card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.work-card h3{margin:0;font-family:var(--f-body);font-size:18px;overflow-wrap:anywhere}
+.work-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.6;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 .work-card .meta{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--muted)}
 .work-card .addrow{margin-top:auto}
 .meta-col{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);margin-top:10px}
