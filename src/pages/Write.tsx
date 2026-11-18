@@ -11,6 +11,7 @@ import { namesOf } from "../lib/mention";
 import type { WriteLimit } from "../lib/types";
 import { KeepCaret } from "../components/keepCaret";
 import { SelectionUi, keepSelKey } from "../components/selectionUi";
+import { AiRangeTrack, aiRangeNow, markAiRange } from "../components/aiRange";
 import { Guide } from "../components/Guide";
 import { useStore, toast, registerFlush } from "../lib/store";
 import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraft, type Snap } from "../lib/chapterSave";
@@ -85,7 +86,8 @@ function aiParas(text: string) {
 type Panel =
   | { kind: "none" }
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
-  | { kind: "sel"; op: string; from: number; to: number; text: string; done: boolean; err?: string; note: string; skip: string[] }
+  // noSel：续写时没选中文字（取的是光标所在段落作上下文），结果只能插进去，不能「替换选中」
+  | { kind: "sel"; op: string; noSel: boolean; text: string; done: boolean; err?: string; note: string; skip: string[] }
   | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
@@ -199,7 +201,7 @@ export default function Write() {
   const save = useMemo(() => debounce((id: string, ed: Editor) => saveNow(id, snapOf(ed)), 700), [work.id]);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight, KeepCaret, SelectionUi],
+    extensions: [StarterKit.configure({ heading: false, codeBlock: false, code: false, horizontalRule: false }), Placeholder.configure({ placeholder: "从这里开始写。Ctrl+Enter 让 AI 给三个接下来的写法。" }), AiText, AiEdit, AiTracker, ScanHighlight, KeepCaret, SelectionUi, AiRangeTrack],
     content: "",
     editorProps: {
       // Ctrl+Enter 留给「接下来怎么写」，不让编辑器插换行
@@ -295,7 +297,10 @@ export default function Write() {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (e.key === "Enter" && mod) {
+      // 焦点在正文以外的输入框里（AI 助手、查找框等），Ctrl+Enter 是那个框自己的，不触发「接下来怎么写」
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      const elsewhere = !!t?.closest("input, textarea, select, [contenteditable]") && !editor?.view.dom.contains(t);
+      if (e.key === "Enter" && mod && !elsewhere) {
         e.preventDefault();
         suggest();
       }
@@ -416,13 +421,15 @@ export default function Write() {
     toast("已插入。浅黄底是 AI 写的，你改过以后会变成虚线");
   }
 
-  async function selOp(op: string, note = "", range?: { from: number; to: number }, skip: string[] = []) {
+  async function selOp(op: string, note = "", range?: { from: number; to: number; noSel: boolean }, skip: string[] = []) {
     if (!editor || !cur) return;
     let { from, to } = range ?? editor.state.selection;
+    let noSel = range?.noSel ?? false;
     // 续写不用先选中：取光标所在的这一段（光标在空行就取上一段）
     if (!range && from === to && op === "续写") {
       const p = continueRange(editor.state.doc, from);
       if (p) ({ from, to } = p);
+      noSel = true;
     }
     const sel = editor.state.doc.textBetween(from, to, "\n");
     if (!sel.trim()) {
@@ -431,7 +438,9 @@ export default function Write() {
     }
     abort.current?.abort();
     abort.current = new AbortController();
-    setPanel({ kind: "sel", op, from, to, text: "", done: false, note, skip });
+    // 记下原文位置，之后正文的每次改动都会把它挪到对的地方
+    editor.view.dispatch(markAiRange(editor.state, from, to));
+    setPanel({ kind: "sel", op, noSel, text: "", done: false, note, skip });
     try {
       await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
@@ -442,10 +451,17 @@ export default function Write() {
 
   function applySel(mode: "replace" | "after") {
     if (panel.kind !== "sel" || !editor) return;
+    const body = splitLimitNote(panel.text).body;
+    // AI 只回了空白：不能拿空白去替换，原文一个字都不动
+    if (!body.trim()) return void toast("AI 这次没有写出内容，原文没动");
+    // 续写没选中文字，选区只是上下文，不能替换
+    if (mode === "replace" && panel.noSel) return;
+    // 生成期间作者可能改过正文：位置已经跟着挪过；原文被改了就不动，免得改到别处
+    const r = aiRangeNow(editor.state);
+    if (!r) return void toast("原来选中的文字在生成期间被改动了，没有应用。请重新选中再试");
     beforeAi();
     // 替换时按改动算：只改了几个词，就只有这几个词算 AI
-    const orig = editor.state.doc.textBetween(panel.from, panel.to, "\n");
-    const body = splitLimitNote(panel.text).body;
+    const orig = editor.state.doc.textBetween(r.from, r.to, "\n");
     const d = mode === "replace" ? diffParas(orig, body) : null;
     extra("ai", d ? d.added : countWords(body));
     const content = d ? d.content : aiParas(body);
@@ -456,7 +472,7 @@ export default function Write() {
     if (mode === "replace") {
       // 选中的是整段就整段换掉；选中段落中间的一截、AI 只回了一段，就原地换文字，不再多出空段
       const doc = editor.state.doc;
-      let { from, to } = panel;
+      let { from, to } = r;
       const $f = doc.resolve(from);
       const $t = doc.resolve(to);
       const whole = $f.parentOffset === 0 && $t.parentOffset === $t.parent.content.size;
@@ -466,7 +482,11 @@ export default function Write() {
         if ($t.parentOffset === $t.parent.content.size && $t.depth > 0) to = $t.after($t.depth);
         chain.insertContentAt({ from, to }, content).run();
       }
-    } else chain.insertContentAt(editor.state.doc.resolve(panel.to).after(1), content).run();
+    } else {
+      // 插在原文所在段落后面（全选时位置在最外层，就直接接在末尾）
+      const $t = editor.state.doc.resolve(r.to);
+      chain.insertContentAt($t.depth >= 1 ? $t.after(1) : r.to, content).run();
+    }
     setPanel({ kind: "none" });
   }
 
@@ -905,7 +925,13 @@ export default function Write() {
               </button>
             </div>
           ) : (
-            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} redoSel={(note, skip) => panel.kind === "sel" && selOp(panel.op, note, { from: panel.from, to: panel.to }, skip)} limits={limits} scanOpts={scanOpts} fix={fixPanel} checkLim={async (text) => (cur ? T.checkLimits(ctx(), cur, splitLimitNote(text).body) : [])} />
+            <AiPanel panel={panel} setPanel={setPanel} insertInline={insertInline} applySel={applySel} applyFill={applyFill} addChange={addChange} stop={() => abort.current?.abort()} redoSel={(note, skip) => {
+              if (panel.kind !== "sel" || !editor) return;
+              // 按原文现在的位置重新生成；原文已被改动就让作者重新选
+              const r = aiRangeNow(editor.state);
+              if (!r) return void toast("原来选中的文字已经改动了，请重新选中再生成");
+              selOp(panel.op, note, { ...r, noSel: panel.noSel }, skip);
+            }} limits={limits} scanOpts={scanOpts} fix={fixPanel} checkLim={async (text) => (cur ? T.checkLimits(ctx(), cur, splitLimitNote(text).body) : [])} />
           )}
 
           <div className="panel">
@@ -1057,6 +1083,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         </h3>
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} skip={panel.skip} empty={panel.done ? "" : "正在写……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
+        {panel.done && !panel.err && !splitLimitNote(panel.text).body.trim() && <Empty>AI 这次没有写出内容，可以重新生成。</Empty>}
         {panel.done && <RedoNote note={panel.note} skip={panel.skip} redo={redoSel} limits={limits} />}
         <div className="addrow">
           {!panel.done && (
@@ -1064,12 +1091,14 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
               停止
             </button>
           )}
-          {panel.done && panel.text && (
+          {panel.done && splitLimitNote(panel.text).body.trim() && (
             <>
-              <button className="btn primary" type="button" onClick={() => applySel("replace")}>
-                替换选中
-              </button>
-              <button className="btn" type="button" onClick={() => applySel("after")}>
+              {!panel.noSel && (
+                <button className="btn primary" type="button" onClick={() => applySel("replace")}>
+                  替换选中
+                </button>
+              )}
+              <button className={panel.noSel ? "btn primary" : "btn"} type="button" onClick={() => applySel("after")}>
                 插在后面
               </button>
             </>
@@ -1093,7 +1122,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
               停止
             </button>
           )}
-          {panel.done && panel.text && (
+          {panel.done && splitLimitNote(panel.text).body.trim() && (
             <>
               <button className="btn primary" type="button" onClick={() => applyFill("end")}>
                 接到正文末尾
