@@ -251,7 +251,7 @@ export function BackupPanel() {
   const [list, setList] = useState<bk.BackupFile[]>([]);
   const [dir2, setDir2] = useState("");
   const [open, setOpen] = useState<string | null>(null);
-  const [chs, setChs] = useState<{ id: string; words: number; updated: number }[]>([]);
+  const [chs, setChs] = useState<{ id: string; words: number; updated: number; title?: string }[]>([]);
   const [step, setStep] = useState("");
   const load = () => bk.listBackups().then(setList);
   useEffect(() => {
@@ -349,21 +349,39 @@ export function BackupPanel() {
                   </AsyncButton>
                   {open === b.name && (
                     <ul className="scan-list">
-                      {chs.filter((c) => titles.has(c.id)).length ? (
+                      {/* 已经删掉的章（备份时还在大纲里）也列出来，可以放回书里 */}
+                      {chs.filter((c) => titles.has(c.id) || c.title != null).length ? (
                         chs
-                          .filter((c) => titles.has(c.id))
+                          .filter((c) => titles.has(c.id) || c.title != null)
                           .map((c) => (
                             <li key={c.id}>
                               <span>
-                                {titles.get(c.id)} · {c.words.toLocaleString()} 字
+                                {titles.get(c.id) ?? `（已删除）${c.title || "无题章"}`} · {c.words.toLocaleString()} 字
                               </span>
-                              <AsyncButton
-                                onClick={async () => {
-                                  if (work && (await bk.pullChapter(b.name, work.id, c.id))) toast("已放进这一章的「历史」，到写作页对比后再决定用不用");
-                                }}
-                              >
-                                放进历史
-                              </AsyncButton>
+                              {titles.has(c.id) ? (
+                                <AsyncButton
+                                  onClick={async () => {
+                                    if (work && (await bk.pullChapter(b.name, work.id, c.id))) toast("已放进这一章的「历史」，到写作页对比后再决定用不用");
+                                  }}
+                                >
+                                  放进历史
+                                </AsyncButton>
+                              ) : (
+                                <AsyncButton
+                                  onClick={async () => {
+                                    if (!work) return;
+                                    const err = await bk.restoreDeletedChapter(b.name, work.id, c.id);
+                                    if (err) return toast(err);
+                                    useStore.getState().edit("vols", (d) => {
+                                      if (!d.length) d.push({ id: uid("v"), title: "第一卷", chapters: [] });
+                                      d[d.length - 1].chapters.push({ ...newChapter(c.title || ""), id: c.id, status: "已写" });
+                                    });
+                                    toast(`已放回书里：最后一卷末尾的「${c.title || "无题章"}」`);
+                                  }}
+                                >
+                                  放回书里
+                                </AsyncButton>
+                              )}
                             </li>
                           ))
                       ) : (

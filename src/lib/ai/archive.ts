@@ -97,6 +97,24 @@ interface Digest {
   ripple?: string;
 }
 
+/** AI 返回的字段规整成字符串：数字照写，数组、对象取里面的字，其他当成没有 */
+export function str(v: unknown): string {
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(str).filter(Boolean).join("、");
+  if (v && typeof v === "object") return Object.values(v).map(str).filter(Boolean).join("，");
+  return "";
+}
+
+/** 检查 AI 返回的归档：结构不对就报错，旧归档原样保留，下次再补 */
+export function toArchive(d: unknown, no: number): Archive {
+  const o = d && typeof d === "object" && !Array.isArray(d) ? (d as Record<string, unknown>) : null;
+  const summary = o ? str(o.summary) : "";
+  if (!summary) throw new Error("AI 返回的归档格式不对（没有摘要），这次没有保存，旧的归档保留，稍后会再试。");
+  const facts = (Array.isArray(o!.facts) ? o!.facts : []).filter((x): x is string | number => typeof x === "string" || typeof x === "number").map((x) => String(x).trim()).filter(Boolean).slice(0, 8);
+  return { summary, end: str(o!.end), facts, no };
+}
+
 const KEYS = ["id", "class", "power", "clothes", "acc", "want", "rel", "core", "look", "hair", "fear", "values"];
 
 /**
@@ -132,7 +150,7 @@ ${old ? `\n这一章之前归档过，旧的归档是：\n摘要：${old.summary
     ],
     { temperature: 0.2 },
   );
-  const archive: Archive = { summary: String(d.summary ?? "").trim(), end: String(d.end ?? "").trim(), facts: (Array.isArray(d.facts) ? d.facts : []).map(String).filter(Boolean).slice(0, 8), no: r.no };
+  const archive = toArchive(d, r.no);
   // 中途换了书，就不写了
   if (useStore.getState().work?.id !== workId) throw new Error("已经切换到别的书，归档取消");
   await repo.saveArchive(workId, r.ch.id, plain, archive);
@@ -150,7 +168,10 @@ ${old ? `\n这一章之前归档过，旧的归档是：\n摘要：${old.summary
   // 人设变化：先去掉这一章旧的 AI 记录，再加新的；有变化才进「AI 变更记录」，可以撤销
   let changes = 0;
   let conflicts = 0;
-  const list = (Array.isArray(d.changes) ? d.changes : []).filter((x) => x && x.name && x.field && x.to);
+  // 字段一律规整成字符串：to 是对象时人物页会白屏
+  const list = (Array.isArray(d.changes) ? d.changes : [])
+    .map((x) => (x && typeof x === "object" ? { name: str(x.name), field: str(x.field), to: str(x.to), cause: str(x.cause), quote: str(x.quote) } : null))
+    .filter((x): x is Digest["changes"][number] => !!(x && x.name && x.field && x.to));
   const hadOld = useStore.getState().chars.some((p) => (p.changes ?? []).some((x) => x.ch === r.ch.id && x.by === "ai"));
   if (list.length || hadOld) {
     useStore.getState().aiEdit(`第${r.no}章归档：人设变化`, ["chars"], (dr) => {
@@ -171,7 +192,7 @@ ${old ? `\n这一章之前归档过，旧的归档是：\n摘要：${old.summary
   await mem.replaceChapterFacts(workId, r.ch.id, r.no, archive.facts);
 
   // 改的是前文，而且改掉了会影响后文的东西：提醒对齐后面的大纲
-  const ripple = old ? String(d.ripple ?? "").trim() : "";
+  const ripple = old ? str(d.ripple) : "";
   const hasLater = allChapters(useStore.getState().vols).some((x) => x.no > r.no);
   if (ripple && hasLater) await addRipple(workId, { id: uid("rp"), at: now, ch: r.ch.id, what: ripple });
   return { archive, ripple, changes, conflicts };

@@ -13,8 +13,11 @@ import { archiveMany, archiveMap, stale } from "./archive";
 /** 每晚最多补归档几章，再多就到记忆页手动「补归档全部」 */
 export const NIGHT_LIMIT = 30;
 
-export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: string) => void): Promise<mem.MemLogEntry> {
+/** day：结哪一天的账（漏跑后补跑时是漏掉的那天），日记写到这一天 */
+export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: string) => void, day = today()): Promise<mem.MemLogEntry> {
   const lines: string[] = [];
+  // AI 返回空内容时不覆盖原有的，这次记为失败
+  let bad = false;
   const log = await mem.getLog(c.work.id);
   const lastScript = log.find((e) => e.kind === "script");
   if (!lastScript || lastScript.day !== today() || !lastScript.ok) {
@@ -37,17 +40,23 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
     const s = useStore.getState();
     const cur: Ctx = { ...c, vols: s.vols, chars: s.chars };
 
-    // 2. 写作日记
-    onStep?.("写今天的写作日记");
-    const daily = (await repo.dailyWords(c.work.id, 1)).find((x) => x.day === today());
-    const todays = allChapters(cur.vols).filter((r) => texts.find((x) => x.id === r.ch.id && new Date(x.updated).toDateString() === new Date().toDateString()));
-    const changesToday = cur.chars.flatMap((p) => (p.changes ?? []).filter((x) => new Date(x.at).toDateString() === new Date().toDateString()).map((x) => `${p.name}：${fieldLabel(x.field)} ${x.from || "（空）"} → ${x.to}（${x.status === "conflict" ? "锁定项冲突，待处理" : x.cause}）`));
+    // 2. 写作日记：按结账的那一天统计
+    const label = day === today() ? "今天" : day;
+    onStep?.(`写${label}的写作日记`);
+    const daily = (await repo.dailyWords(c.work.id, 7)).find((x) => x.day === day);
+    const todays = allChapters(cur.vols).filter((r) => texts.find((x) => x.id === r.ch.id && today(new Date(x.updated)) === day));
+    const changesToday = cur.chars.flatMap((p) => (p.changes ?? []).filter((x) => today(new Date(x.at)) === day).map((x) => `${p.name}：${fieldLabel(x.field)} ${x.from || "（空）"} → ${x.to}（${x.status === "conflict" ? "锁定项冲突，待处理" : x.cause}）`));
     const diary = await chat([
       { role: "system", content: "你替作者写当天的写作日记，平实、具体、不夸。分五段，每段用【】标题：今日进度、剧情推进、人物变化、伏笔变动、遗留问题。" },
-      { role: "user", content: `今天写了 ${daily?.words ?? 0} 字。\n今天动过的章节：\n${todays.map((r) => `第${r.no}章 ${r.ch.title}：${r.ch.summary || ""}`).join("\n") || "无"}\n人设变化：\n${changesToday.join("\n") || "无"}\n大纲里的伏笔：\n${cur.vols.flatMap((v) => v.chapters.flatMap((ch) => ch.scenes.filter((x) => x.plant || x.pay).map((x) => `${x.plant ? "埋 " + x.plant : ""}${x.pay ? " 收 " + x.pay : ""}`))).join("；") || "无"}` },
+      { role: "user", content: `${label}写了 ${daily?.words ?? 0} 字。\n${label}动过的章节：\n${todays.map((r) => `第${r.no}章 ${r.ch.title}：${r.ch.summary || ""}`).join("\n") || "无"}\n人设变化：\n${changesToday.join("\n") || "无"}\n大纲里的伏笔：\n${cur.vols.flatMap((v) => v.chapters.flatMap((ch) => ch.scenes.filter((x) => x.plant || x.pay).map((x) => `${x.plant ? "埋 " + x.plant : ""}${x.pay ? " 收 " + x.pay : ""}`))).join("；") || "无"}` },
     ], { temperature: 0.5 });
-    await repo.saveDiary(c.work.id, today(), diary.content.trim());
-    lines.push("写作日记已生成。");
+    if (diary.content.trim()) {
+      await repo.saveDiary(c.work.id, day, diary.content.trim());
+      lines.push(`写作日记已生成（${day}）。`);
+    } else {
+      bad = true;
+      lines.push("写作日记：AI 返回了空内容，没有保存。");
+    }
 
     // 3. 核心摘要压短捋顺
     onStep?.("整理核心摘要");
@@ -58,16 +67,22 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
       { role: "user", content: raw },
     ], { temperature: 0.2 });
     const text = res.content.trim().slice(0, Math.round(residentLimit * 1.1));
-    await mem.saveResident(c.work.id, text, residentLimit);
-    lines.push(`核心摘要 ${text.length} 字（上限 ${residentLimit}）。`);
+    if (text) {
+      await mem.saveResident(c.work.id, text, residentLimit);
+      lines.push(`核心摘要 ${text.length} 字（上限 ${residentLimit}）。`);
+    } else {
+      bad = true;
+      lines.push("核心摘要：AI 返回了空内容，原来的保留不动。");
+    }
 
     // 4. 设定集：只提炼「这本书定下了什么」
     onStep?.("更新设定集");
     const bible = await mem.getBible(c.work.id);
-    // 设定集上次更新之后归档过的章（包括白天自动归档的）
+    // 上次 AI 提炼之后归档过的章（包括白天自动归档的）；作者手动保存设定集不算提炼
+    const upto = Date.now();
     const arcs = await archiveMap(c.work.id);
     const sums = allChapters(s.vols)
-      .filter((r) => (arcs.get(r.ch.id)?.at ?? 0) > bible.at)
+      .filter((r) => (arcs.get(r.ch.id)?.at ?? 0) > (bible.upto ?? bible.at))
       .slice(-40)
       .map((r) => `第${r.no}章：${arcs.get(r.ch.id)!.summary}`)
       .join("\n");
@@ -76,11 +91,18 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
         { role: "system", content: "你维护小说的「设定集」：只记已经确立、以后不能推翻的设定和事实，按类别分组（世界规则、人物定论、重要物件、地点、时间线定点）。保留已有条目，加入新的，删除重复。直接输出全文。" },
         { role: "user", content: `现有设定集：\n${bible.text || "（空）"}\n\n新写的章节摘要：\n${sums}` },
       ], { temperature: 0.2 });
-      await mem.saveBible(c.work.id, b.content.trim());
-      lines.push("设定集已更新。");
+      const nb = b.content.trim();
+      // 空的、或比原来短了一大截（原来要求保留已有条目），多半是出错了，不覆盖作者的设定集
+      if (!nb || (bible.text.length > 200 && nb.length < bible.text.length / 3)) {
+        bad = true;
+        lines.push(`设定集：AI 返回的内容${nb ? "比原来短太多" : "是空的"}，原来的设定集保留不动，下次整理再试。`);
+      } else {
+        await mem.saveBible(c.work.id, nb, upto);
+        lines.push("设定集已更新。");
+      }
     } else lines.push("没有新章节，设定集不动。");
 
-    const e: mem.MemLogEntry = { at: Date.now(), day: today(), kind: "model", ok: true, lines };
+    const e: mem.MemLogEntry = { at: Date.now(), day: today(), kind: "model", ok: !bad, lines };
     await mem.appendLog(c.work.id, e);
     return e;
   } catch (err: any) {

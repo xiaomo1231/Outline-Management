@@ -177,7 +177,7 @@ function useScheduler(workId: string | null) {
     const check = async () => {
       const p = await prefs();
       const h = await mem.health(workId, p.dailyAt);
-      if (h.overdue) run(h.lastScript && h.lastScript.day < today() ? "补跑昨天漏掉的整理" : "到点了");
+      if (h.overdue) run(h.owe < today() ? "补跑漏掉的整理" : "到点了");
     };
     const t0 = setTimeout(check, 8000);
     const t = setInterval(check, 60_000);

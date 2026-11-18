@@ -97,11 +97,36 @@ async function openBackup(name: string) {
   return Database.load(`sqlite:backups/${name}`);
 }
 
-/** 这份备份里，某本书各章的字数 */
-export async function chaptersInBackup(name: string, work: string): Promise<{ id: string; words: number; updated: number }[]> {
+/** 这份备份里，某本书各章的字数；title 是备份时大纲里的章名，已经删掉的章靠它认 */
+export async function chaptersInBackup(name: string, work: string): Promise<{ id: string; words: number; updated: number; title?: string }[]> {
   const b = await openBackup(name);
   try {
-    return (await b.select(`SELECT id, words, updated FROM chapter_text WHERE work_id=?`, [work])) as any[];
+    const rows = (await b.select(`SELECT id, words, updated FROM chapter_text WHERE work_id=?`, [work])) as { id: string; words: number; updated: number }[];
+    const titles = new Map<string, string>();
+    try {
+      const doc = ((await b.select(`SELECT data FROM docs WHERE work_id=? AND kind='outline'`, [work])) as { data: string }[])[0];
+      for (const v of JSON.parse(doc?.data ?? "[]")) for (const c of v.chapters ?? []) titles.set(c.id, c.title || "");
+    } catch {
+      /* 备份里的大纲读不出来，就只认还在书里的章 */
+    }
+    return rows.map((r) => ({ ...r, title: titles.get(r.id) }));
+  } finally {
+    await b.close();
+  }
+}
+
+/** 取回一章已经彻底删除的：把备份里的正文写回库里（不记进今日字数），由调用方放回大纲。返回出错原因，成功返回空串 */
+export async function restoreDeletedChapter(name: string, work: string, ch: string): Promise<string> {
+  const db = await getDb();
+  const cur = await db.all<{ deleted: number | null }>(`SELECT deleted FROM chapter_text WHERE id=?`, [ch]);
+  if (cur.some((x) => x.deleted)) return "这一章还在回收站里，到「回收站」里恢复就行";
+  if (cur.length) return "";
+  const b = await openBackup(name);
+  try {
+    const r = ((await b.select(`SELECT html, plain, words, ai_chars FROM chapter_text WHERE id=?`, [ch])) as any[])[0];
+    if (!r) return "这份备份里没有这一章的正文";
+    await db.exec(`INSERT INTO chapter_text(id, work_id, html, plain, words, ai_chars, updated, deleted) VALUES(?,?,?,?,?,?,?,0)`, [ch, work, r.html ?? "", r.plain ?? "", r.words ?? 0, r.ai_chars ?? 0, Date.now()]);
+    return "";
   } finally {
     await b.close();
   }

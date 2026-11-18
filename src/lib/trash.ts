@@ -1,8 +1,9 @@
 // 回收站：删掉的章、场景先放这里，30 天后每日整理时才真删。作品的回收站在 works 表的 deleted 列。
 import * as repo from "./repo";
+import { getDb } from "./db";
 import { useStore } from "./store";
 import { uid } from "./util";
-import type { Chapter, Id, Scene, TrashItem } from "./types";
+import type { Chapter, Id, MemItem, Scene, TrashItem } from "./types";
 
 export const KEEP_DAYS = 30;
 const DAY = 86_400_000;
@@ -20,15 +21,22 @@ export async function trashChapter(work: Id, v: number, c: number, no: number) {
   const vol = s.vols[v];
   const ch = vol?.chapters[c];
   if (!ch) return;
-  const item: TrashItem = { id: uid("tr"), kind: "chapter", at: Date.now(), label: `第${no}章 ${ch.title || "（无题）"}`, parent: vol.id, index: c, data: ch };
+  // 这一章记的人设变化和归档事实一起收起来：章不在了，变化会被当成从第 1 章起生效
+  const changes = s.chars.map((p) => ({ char: p.id, list: (p.changes ?? []).filter((x) => x.ch === ch.id) })).filter((x) => x.list.length);
   const sids = new Set(ch.scenes.map((x) => x.id));
-  s.editMany(["vols", "events"], (d) => {
+  s.editMany(["vols", "events", "chars"], (d) => {
     d.vols[v].chapters.splice(c, 1);
     for (const e of d.events) {
       if (e.sc && sids.has(e.sc)) delete e.sc;
       if (e.ch === ch.id) e.ch = null;
     }
+    for (const p of d.chars) if (p.changes?.some((x) => x.ch === ch.id)) p.changes = p.changes.filter((x) => x.ch !== ch.id);
   });
+  const src = "归档:" + ch.id;
+  const db = await getDb();
+  const facts = await db.all<MemItem>(`SELECT * FROM memory WHERE work_id=? AND src=?`, [work, src]);
+  const item: TrashItem = { id: uid("tr"), kind: "chapter", at: Date.now(), label: `第${no}章 ${ch.title || "（无题）"}`, parent: vol.id, index: c, data: ch, changes, facts };
+  await db.exec(`DELETE FROM memory WHERE work_id=? AND src=?`, [work, src]);
   await repo.markTextDeleted(ch.id, true);
   await saveTrash(work, [item, ...(await listTrash(work))]);
 }
@@ -71,6 +79,21 @@ export async function restoreItem(work: Id, id: Id): Promise<string> {
         d[vi].chapters.push(ch);
       } else d[vi].chapters.splice(Math.min(item.index, d[vi].chapters.length), 0, ch);
     });
+    // 删章时收起来的人设变化和记忆事实放回去（人物已经删了的就算了）
+    if (item.changes?.length)
+      s.edit("chars", (d) => {
+        for (const x of item.changes!) {
+          const p = d.find((y) => y.id === x.char);
+          if (!p) continue;
+          const have = new Set((p.changes ?? []).map((y) => y.id));
+          (p.changes ??= []).push(...x.list.filter((y) => !have.has(y.id)));
+        }
+      });
+    if (item.facts?.length) {
+      const db = await getDb();
+      for (const m of item.facts)
+        await db.exec(`INSERT OR IGNORE INTO memory(id, work_id, layer, kind, text, short, ch, hits, last_hit, score, created, updated, src) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, [m.id, m.work_id, m.layer, m.kind, m.text, m.short, m.ch, m.hits, m.last_hit, m.score, m.created, m.updated, m.src]);
+    }
     await repo.markTextDeleted(ch.id, false);
   } else {
     const sc = item.data as Scene;
