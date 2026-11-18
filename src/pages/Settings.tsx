@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
 import { DEFAULT_AI, listModels, chat, errText, normAi, type AiSettings } from "../lib/ai/client";
+import type { WriteLimit } from "../lib/types";
+import { levelName } from "../lib/limits";
 import { EDITOR_DEFAULT, MEM_DEFAULT, RESIDENT_MAX, RESIDENT_MIN, residentLimitOf, useSetting, type EditorPrefs, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
@@ -15,6 +17,7 @@ export default function Settings() {
   const [ai, setAi] = useSetting<AiSettings>("ai", DEFAULT_AI);
   const [memp, setMemp] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [edp, setEdp, edpReady] = useSetting<EditorPrefs>("editor", EDITOR_DEFAULT);
+  const [mine, setMine] = useSetting<WriteLimit[]>("limitTemplates", []);
   const [key, setKey] = useState("");
   const [hasKey, setHasKey] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -176,6 +179,23 @@ export default function Settings() {
         <p className="legend" style={{ margin: "6px 0 0" }}>
           关掉只是不显示，AI 写的字照样记录，写作页底部的「本章 AI 占比」照常计算。写作页底部也有同样的开关。
         </p>
+        <h3 style={{ marginTop: 14 }}>我的常用限制</h3>
+        {mine.length ? (
+          <ul className="scan-list">
+            {mine.map((l) => (
+              <li key={l.id}>
+                <span>
+                  {l.text} <span className="chip">{l.type}</span> <span className="chip">{levelName(l.level)}</span>
+                </span>
+                <button className="btn" type="button" onClick={() => setMine(mine.filter((x) => x.id !== l.id))}>
+                  删除
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="legend">还没有。在任何一本书的「风格与限制 → 写作限制」里点「存为常用」，新建作品时会默认带上。</p>
+        )}
       </div>
 
       <div className="panel">

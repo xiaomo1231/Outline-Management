@@ -71,7 +71,7 @@ export function leak(block: Pick<StyleBlock, "name" | "desc" | "dims">): string[
 }
 
 export function emptySetup(): StyleSetup {
-  return { core: null, sub: [], accent: [], rules: "", samples: "", blocks: [] };
+  return { core: null, sub: [], accent: [], rules: "", samples: "", blocks: [], limits: [] };
 }
 
 export function allBlocks(s: StyleSetup): StyleBlock[] {

@@ -1,4 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import LimitsPanel from "../components/LimitsPanel";
+import { copyForBook } from "../lib/limits";
+import type { WriteLimit } from "../lib/types";
 import { useStore } from "../lib/store";
 import StyleBuilder from "../components/StyleBuilder";
 import { emptySetup } from "../lib/style";
@@ -20,6 +23,10 @@ export default function NewWork() {
   const [keyOk, setKeyOk] = useState(true);
   const [chapWords, setChapWords] = useState(2500);
   const [style, setStyle] = useState<StyleSetup>(emptySetup());
+  // 新书默认带上「我的常用限制」，作者可以在最后一步取消
+  useEffect(() => {
+    repo.getSetting<WriteLimit[]>("limitTemplates", []).then((ls) => ls.length && setStyle((s) => (s.limits?.length ? s : { ...s, limits: ls.map(copyForBook) })));
+  }, []);
 
   const info = () => ({ name: name.trim() || "未命名作品", intro: intro.trim(), goal: Math.max(100, goal || 2000), chapWords: Math.max(500, chapWords || 2500) });
   // 建书只建一次：连点「下一步」时第二次等第一次建好的那本
@@ -54,7 +61,7 @@ export default function NewWork() {
   }
   // 跳过：组件里的风格也清空，后面「进入写作」「现在去填」才不会把搭过的风格又写回去
   function skipStyle() {
-    const s = emptySetup();
+    const s = { ...emptySetup(), limits: style.limits };
     setStyle(s);
     void toStep3(s);
   }
@@ -171,6 +178,12 @@ export default function NewWork() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {step === 3 && (
+        <div style={{ maxWidth: 760, marginTop: 16 }}>
+          <p className="muted" style={{ margin: "0 0 8px" }}>写作限制（可选）：这本书里不想让 AI 写的词、内容和情节。已经勾上了你的常用限制，以后在「风格与限制」页随时改。</p>
+          <LimitsPanel compact value={style.limits ?? []} names={[]} onChange={(v) => setStyle({ ...style, limits: v })} />
         </div>
       )}
     </section>
