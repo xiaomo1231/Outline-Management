@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, applyVolumeSplit, dayLabel, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
-import { phaseName, where } from "../../lib/plan";
+import { allChapters, applyVolumeSplit, dayLabel, findScene, moveChapter, moveScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
+import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
 import { cnNum, uid } from "../../lib/util";
@@ -101,6 +101,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   const vols = useStore((s) => s.vols);
   const plan = useStore((s) => s.plan);
   const edit = useStore((s) => s.edit);
+  const editMany = useStore((s) => s.editMany);
   const [drag, setDrag] = useState<{ k: "c" | "s"; id: string; s?: number } | null>(null);
   const [split, setSplit] = useState("");
   const [fold, setFold] = useSetting<Record<string, number>>("treeFold", {});
@@ -112,33 +113,18 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   const chs = allChapters(vols);
   const cur = chs.find((r) => r.ch.id === sel.ch) ?? chs[0];
 
-  function drop(target: ChRef, si: number | null) {
+  /** target 是章时放到这一章（si 为场景位置）；是数字时表示把章放到这一卷末尾 */
+  function drop(target: ChRef | number, si: number | null) {
     if (!drag) return;
-    edit("vols", (d) => {
-      const all = allChapters(d as any);
-      const from = all.find((r) => r.ch.id === drag.id);
-      const to = all.find((r) => r.ch.id === target.ch.id);
-      if (!from || !to) return;
-      if (drag.k === "c") {
-        if (from.ch.id === to.ch.id) return;
-        const [item] = d[from.v].chapters.splice(from.c, 1);
-        const tc = d[to.v].chapters.findIndex((c) => c.id === to.ch.id);
-        d[to.v].chapters.splice(tc, 0, item);
-        // 有篇幅规划时，拖过去的章按新位置更新所属阶段
-        if (plan.length && item.pl) {
-          const no = allChapters(d as any).find((r) => r.ch.id === item.id)?.no;
-          const w = no ? where(plan, no) : null;
-          if (w) item.pl = w;
-        }
-      } else {
-        const [s] = d[from.v].chapters[from.c].scenes.splice(drag.s!, 1);
-        const arr = d[to.v].chapters.find((c) => c.id === to.ch.id)!.scenes;
-        let ts = si ?? arr.length;
-        if (from.ch.id === to.ch.id && drag.s! < ts) ts--;
-        arr.splice(ts, 0, s);
-      }
-    });
+    // 选中状态记的是场景序号，拖完按 id 找回原来选中的场景
+    const selId = sel.ch && sel.s >= 0 ? chs.find((r) => r.ch.id === sel.ch)?.ch.scenes[sel.s]?.id : undefined;
+    let moved = false;
+    if (drag.k === "c") edit("vols", (d) => void (moved = typeof target === "number" ? moveChapter(d as any, plan, drag.id, null, target) : moveChapter(d as any, plan, drag.id, target.ch.id)));
+    else if (typeof target !== "number") editMany(["vols", "events"], (d) => void (moved = moveScene(d.vols as any, d.events as any, drag.id, drag.s!, target.ch.id, si)));
     setDrag(null);
+    if (!moved) return;
+    const f = selId ? findScene(useStore.getState().vols, selId) : undefined;
+    if (f) setSel({ ch: f.r.ch.id, s: f.i });
     toast("顺序已调整，章节号会自动重排");
   }
 
@@ -199,7 +185,17 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
             </button>
           </div>
           {vols.map((v, vi) => (
-            <div className="vol" key={v.id}>
+            <div
+              className="vol"
+              key={v.id}
+              onDragOver={(e) => drag?.k === "c" && e.preventDefault()}
+              onDrop={(e) => {
+                // 章放在卷标题、空白处或「加一章」上：放到这一卷末尾，空卷也能拖进来
+                if (drag?.k !== "c") return;
+                e.preventDefault();
+                drop(vi, null);
+              }}
+            >
               <h4>
                 <button type="button" className="fold" aria-expanded={!fold[v.id]} title={fold[v.id] ? "展开这一卷" : "收起这一卷"} onClick={() => toggle(v.id)}>
                   {fold[v.id] ? "▸" : "▾"}
@@ -348,7 +344,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const editMany = useStore((s) => s.editMany);
   const openChapter = useStore((s) => s.openChapter);
   const vi = sel.vol ? vols.findIndex((v) => v.id === sel.vol) : -1;
-  if (vi >= 0) return <VolCard vi={vi} setSel={setSel} say={say} />;
+  if (vi >= 0) return <VolCard key={vols[vi].id} vi={vi} setSel={setSel} say={say} />;
   const r = allChapters(vols).find((x) => x.ch.id === sel.ch);
   if (!r) return <div className="panel det"><Empty>点左侧的章或场景来编辑，或点卷名旁的「卷大纲」先写整卷的走向。</Empty></div>;
   const s = sel.s >= 0 ? r.ch.scenes[sel.s] : undefined;
@@ -358,6 +354,11 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const setSc = (k: keyof Scene, v: any) =>
     editMany(["vols", "events"], (d) => {
       const sc = d.vols[r.v].chapters[r.c].scenes[sel.s] as any;
+      // 已关联事件的场景清空天数时两边都保留原来的天数（事件必须有天数），免得场景显示未定、事件却成了第 1 天
+      if (k === "day" && v == null && sc.ev) {
+        const e = d.events.find((x) => x.id === sc.ev);
+        if (e) v = e.day;
+      }
       // 改场景大纲时，按文字里新提到的人名（含别名）自动勾上出场人物
       if ((SCENE_TEXT as readonly string[]).includes(k as string)) {
         const before = sceneText(sc);
@@ -374,7 +375,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
       // 已关联的事件保持一致
       if ((SHARE as readonly string[]).includes(k as string) && sc.ev) {
         const e = d.events.find((x) => x.id === sc.ev) as any;
-        if (e) e[k] = k === "day" ? v ?? 1 : v;
+        if (e) e[k] = v;
       }
     });
   const plOpts: [string, string][] = [["", "未归属"]];
@@ -683,6 +684,24 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
         <button className="btn" type="button" onClick={() => setQuick(quick === null ? "" : null)}>
           {quick === null ? "一次加多章" : "收起"}
         </button>
+        <button
+          className="btn"
+          type="button"
+          disabled={chs.length > 0 || vols.length < 2}
+          title={chs.length ? "这一卷还有章，先把章拖到别的卷或删掉" : vols.length < 2 ? "至少要留一卷" : "删掉这个空卷"}
+          onClick={() => {
+            if (!confirm(`删除「${v.title || `第${cnNum(vi + 1)}卷`}」？这一卷没有章，卷大纲、目标等内容会一起删掉。`)) return;
+            const id = v.id;
+            edit("vols", (d) => {
+              const i = d.findIndex((x) => x.id === id);
+              if (i >= 0 && !d[i].chapters.length && d.length > 1) d.splice(i, 1);
+            });
+            setSel({ ch: null, s: -1 });
+            toast("已删除这一卷");
+          }}
+        >
+          删除本卷
+        </button>
       </div>
       {quick !== null && (
         <div style={{ marginTop: 8 }}>
@@ -731,7 +750,8 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
 function SplitPreview({ vi, list, tl, done }: { vi: number; list: T.SplitChapter[]; tl: boolean; done: (n: ReturnType<typeof Empty>) => void }) {
   const vols = useStore((s) => s.vols);
   const [on, setOn] = useState<boolean[]>(() => list.map(() => true));
-  const chs = vols[vi]?.chapters ?? [];
+  // 用全书章号，和大纲树上的编号一致
+  const chs = allChapters(vols).filter((r) => r.v === vi);
   return (
     <div>
       <p style={{ margin: "0 0 4px" }}>
@@ -741,12 +761,12 @@ function SplitPreview({ vi, list, tl, done }: { vi: number; list: T.SplitChapter
         勾选要用的章。已有的章只填空着的章名、大纲和钩子，已经有场景的章不加场景；多出来的在卷末新建。
       </p>
       {list.map((x, i) => {
-        const ex = chs[i];
+        const ex = chs[i]?.ch;
         return (
           <label className="sy-i" key={i}>
             <input type="checkbox" checked={on[i]} onChange={(e) => setOn(on.map((v, j) => (j === i ? e.target.checked : v)))} />
             <span>
-              <b>{ex ? `补第 ${i + 1} 章` : "新建"}：{x.t}</b>
+              <b>{ex ? `补第 ${chs[i].no} 章` : "新建"}：{x.t}</b>
               <small>{x.ol}</small>
               {x.scenes.length > 0 && <small>场景：{x.scenes.map((s) => s.t).join("、")}{ex?.scenes.length ? "（这一章已有场景，不加）" : ""}</small>}
             </span>

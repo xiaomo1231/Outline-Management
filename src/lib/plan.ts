@@ -1,4 +1,4 @@
-import type { Arc, PhaseKind } from "./types";
+import type { Arc, PhaseKind, Volume } from "./types";
 
 export const KIND: Record<PhaseKind, string> = { trans: "过渡", body: "主体", peak: "高潮", end: "收尾", free: "自定义" };
 
@@ -59,30 +59,51 @@ export function phaseName(plan: Arc[], w: { a: number; p: number } | null | unde
   return p ? `${a.name} · ${p.n}` : "";
 }
 
-/** 新事件段：按类型比例分配章数，余数给主体 */
+/** 把四舍五入后的章数凑成总数 T：多出来的给 main；超了先从 main、再从章数最多的阶段扣，每个阶段至少 1 章 */
+function fit(cs: number[], T: number, main: number) {
+  let d = T - cs.reduce((s, c) => s + c, 0);
+  if (d > 0) cs[main] += d;
+  while (d < 0) {
+    const i = cs[main] > 1 ? main : cs.indexOf(Math.max(...cs));
+    if (cs[i] <= 1) break;
+    cs[i]--;
+    d++;
+  }
+}
+
+/** 新事件段：按类型比例分配章数，余数给主体。每个阶段至少 1 章，所以总数不会少于阶段数 */
 export function newArc(name: string, type: string, T: number, gap: number): Arc {
   const r = RATIO[type] ?? RATIO.explore;
-  let sum = 0;
-  const ph = r.map(([k, n, x]) => {
-    const c = Math.max(1, Math.round(x * T));
-    sum += c;
-    return { k, n, c, g: PHASE_GOAL[k], ai: true };
-  });
-  const body = ph.findIndex((p) => p.k === "body");
-  ph[body >= 0 ? body : 0].c += T - sum;
+  const cs = r.map(([, , x]) => Math.max(1, Math.round(x * T)));
+  const body = r.findIndex(([k]) => k === "body");
+  fit(cs, T, body >= 0 ? body : 0);
+  const ph = r.map(([k, n], i) => ({ k, n, c: cs[i], g: PHASE_GOAL[k], ai: true }));
   return { name, gap, ph };
 }
 
-/** 按新的总章数等比例重新分配 */
-export function redistribute(a: Arc, T: number) {
+/** 按新的总章数等比例重新分配，差额给最后一个阶段。返回实际总数（每个阶段至少 1 章） */
+export function redistribute(a: Arc, T: number): number {
   const old = total(a) || 1;
-  let sum = 0;
-  a.ph.forEach((p) => {
-    p.c = Math.max(1, Math.round((p.c / old) * T));
-    sum += p.c;
-  });
-  const last = a.ph[a.ph.length - 1];
-  last.c = Math.max(1, last.c + T - sum);
+  const cs = a.ph.map((p) => Math.max(1, Math.round((p.c / old) * T)));
+  fit(cs, T, cs.length - 1);
+  a.ph.forEach((p, i) => (p.c = cs[i]));
+  return total(a);
+}
+
+/** 删掉第 ai 个事件段（给了 pi 就只删其中第 pi 个阶段）后，各章的所属阶段跟着改：属于被删部分的清空，后面的下标前移 */
+export function dropPl(vols: Volume[], ai: number, pi?: number) {
+  for (const v of vols)
+    for (const c of v.chapters) {
+      const pl = c.pl;
+      if (!pl) continue;
+      if (pi == null) {
+        if (pl.a === ai) c.pl = null;
+        else if (pl.a > ai) pl.a--;
+      } else if (pl.a === ai) {
+        if (pl.p === pi) c.pl = null;
+        else if (pl.p > pi) pl.p--;
+      }
+    }
 }
 
 export interface PaceIssue {

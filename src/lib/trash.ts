@@ -3,10 +3,23 @@ import * as repo from "./repo";
 import { getDb } from "./db";
 import { useStore } from "./store";
 import { uid } from "./util";
-import type { Chapter, Id, MemItem, Scene, TrashItem } from "./types";
+import type { Chapter, Id, MemItem, Scene, StoryEvent, TrashItem } from "./types";
 
 export const KEEP_DAYS = 30;
 const DAY = 86_400_000;
+
+/** 放回的场景重新和事件关联：事件还在、没被别的场景占着，就把 sc 和章节接回来；否则清掉场景这边的 ev */
+function relink(events: StoryEvent[], scenes: Scene[], chId: Id, live: Set<Id>) {
+  for (const s of scenes) {
+    if (!s.ev) continue;
+    const e = events.find((x) => x.id === s.ev);
+    if (e && (!e.sc || e.sc === s.id || !live.has(e.sc))) {
+      e.sc = s.id;
+      e.ch = chId;
+    } else delete s.ev;
+  }
+}
+const sceneIds = (vols: { chapters: Chapter[] }[]) => new Set(vols.flatMap((v) => v.chapters.flatMap((c) => c.scenes.map((x) => x.id))));
 
 export async function listTrash(work: Id): Promise<TrashItem[]> {
   return repo.loadDoc<TrashItem[]>(work, "trash", []);
@@ -24,6 +37,7 @@ export async function trashChapter(work: Id, v: number, c: number, no: number) {
   // 这一章记的人设变化和归档事实一起收起来：章不在了，变化会被当成从第 1 章起生效
   const changes = s.chars.map((p) => ({ char: p.id, list: (p.changes ?? []).filter((x) => x.ch === ch.id) })).filter((x) => x.list.length);
   const sids = new Set(ch.scenes.map((x) => x.id));
+  const evs = s.events.filter((e) => e.ch === ch.id).map((e) => e.id);
   s.editMany(["vols", "events", "chars"], (d) => {
     d.vols[v].chapters.splice(c, 1);
     for (const e of d.events) {
@@ -35,7 +49,7 @@ export async function trashChapter(work: Id, v: number, c: number, no: number) {
   const src = "归档:" + ch.id;
   const db = await getDb();
   const facts = await db.all<MemItem>(`SELECT * FROM memory WHERE work_id=? AND src=?`, [work, src]);
-  const item: TrashItem = { id: uid("tr"), kind: "chapter", at: Date.now(), label: `第${no}章 ${ch.title || "（无题）"}`, parent: vol.id, index: c, data: ch, changes, facts };
+  const item: TrashItem = { id: uid("tr"), kind: "chapter", at: Date.now(), label: `第${no}章 ${ch.title || "（无题）"}`, parent: vol.id, index: c, data: ch, changes, facts, evs };
   await db.exec(`DELETE FROM memory WHERE work_id=? AND src=?`, [work, src]);
   await repo.markTextDeleted(ch.id, true);
   await saveTrash(work, [item, ...(await listTrash(work))]);
@@ -70,7 +84,8 @@ export async function restoreItem(work: Id, id: Id): Promise<string> {
   let where = "";
   if (item.kind === "chapter") {
     const ch = item.data as Chapter;
-    s.edit("vols", (d) => {
+    s.editMany(["vols", "events"], (x) => {
+      const d = x.vols;
       if (!d.length) d.push({ id: uid("v"), title: "第一卷", chapters: [] });
       let vi = d.findIndex((x) => x.id === item.parent);
       if (vi < 0) {
@@ -78,6 +93,10 @@ export async function restoreItem(work: Id, id: Id): Promise<string> {
         where = `原来的卷没了，放在「${d[vi].title}」末尾`;
         d[vi].chapters.push(ch);
       } else d[vi].chapters.splice(Math.min(item.index, d[vi].chapters.length), 0, ch);
+      // 场景和事件重新接上；整章记的事件等删章时清掉章节的，记回这一章
+      const c = d[vi].chapters.find((y) => y.id === ch.id)!;
+      relink(x.events as StoryEvent[], c.scenes as Scene[], ch.id, sceneIds(d as any));
+      for (const e of x.events) if (item.evs?.includes(e.id) && e.ch == null && !e.sc) e.ch = ch.id;
     });
     // 删章时收起来的人设变化和记忆事实放回去（人物已经删了的就算了）
     if (item.changes?.length)
@@ -98,21 +117,27 @@ export async function restoreItem(work: Id, id: Id): Promise<string> {
   } else {
     const sc = item.data as Scene;
     let ok = false;
-    s.edit("vols", (d) => {
+    s.editMany(["vols", "events"], (x) => {
+      const d = x.vols;
+      let at: Chapter | undefined;
       for (const v of d)
         for (const c of v.chapters)
           if (c.id === item.parent) {
             c.scenes.splice(Math.min(item.index, c.scenes.length), 0, sc);
-            ok = true;
+            at = c as Chapter;
           }
-      if (!ok) {
+      if (!at) {
         const first = d[0]?.chapters[0];
         if (first) {
           first.scenes.push(sc);
-          ok = true;
+          at = first as Chapter;
           where = `原来的章没了，放在「${first.title || "第一章"}」末尾`;
         }
       }
+      if (!at) return;
+      ok = true;
+      // 删场景时事件那边的关联已经断了，放回来要接上
+      relink(x.events as StoryEvent[], at.scenes.filter((y) => y.id === sc.id), at.id, sceneIds(d as any));
     });
     if (!ok) return "书里还没有章节，没法放回场景";
   }

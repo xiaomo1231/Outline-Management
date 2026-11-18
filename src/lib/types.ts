@@ -258,6 +258,8 @@ export interface TrashItem {
   /** 删章时一起收起来的：这一章的人设变化（按人物 id）和归档记下的记忆事实，恢复时放回 */
   changes?: { char: Id; list: CharChange[] }[];
   facts?: MemItem[];
+  /** 删章时记在这一章、被清掉章节的事件 id，恢复时记回这一章 */
+  evs?: Id[];
 }
 
 export interface ChatMsg {
