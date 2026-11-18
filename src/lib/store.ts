@@ -130,6 +130,7 @@ export const useStore = create<State>((set, get) => ({
     const data: WorkData = { ...EMPTY };
     for (const k of Object.keys(KIND) as DataKey[]) (data as any)[k] = await repo.loadDoc(id, KIND[k], (EMPTY as any)[k]);
     data.style = { ...emptySetup(), ...data.style };
+    data.chars = tidyChars(data.chars);
     const first = data.vols[0]?.chapters[0]?.id ?? null;
     const last = await repo.getSetting<string | null>("lastChapter:" + id, null);
     set({ ...data, work: w, page, chapterId: last ?? first });
@@ -219,6 +220,7 @@ export const useStore = create<State>((set, get) => ({
       const key = (Object.keys(KIND) as DataKey[]).find((k) => KIND[k] === kind);
       if (key) (patch as any)[key] = all[i].before[kind as keyof ChangeSet["before"]];
     }
+    if (patch.chars) patch.chars = tidyChars(patch.chars);
     set({ ...patch, changesets: all.map((x) => (group.has(x.id) ? { ...x, undone: true } : x)) });
     [...(Object.keys(patch) as DataKey[]), "changesets" as DataKey].forEach(scheduleSave);
     get().flash(`已撤销：${cs.label}`);
@@ -245,6 +247,24 @@ export const useStore = create<State>((set, get) => ({
     for (const r of runs) await r();
   },
 }));
+
+/** 字段值规整成文字：老版本存进去的 AI 人设变化里可能有对象，渲染时会让整页白屏 */
+function text(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v == null) return "";
+  if (typeof v !== "object") return String(v);
+  return (Array.isArray(v) ? v : Object.values(v)).map(text).filter(Boolean).join("，");
+}
+
+/** 载入、撤销回来的人物卡：把人设变化各字段规整成字符串 */
+export function tidyChars(chars: Character[]): Character[] {
+  if (!Array.isArray(chars)) return [];
+  return chars.map((p) =>
+    p.changes?.some((x) => [x.field, x.from, x.to, x.cause].some((v) => typeof v !== "string") || (x.quote != null && typeof x.quote !== "string"))
+      ? { ...p, changes: p.changes.map((x) => ({ ...x, field: text(x.field), from: text(x.from), to: text(x.to), cause: text(x.cause), ...(x.quote != null ? { quote: text(x.quote) } : {}) })) }
+      : p,
+  );
+}
 
 function pick(s: State): WorkData {
   return { vols: s.vols, chars: s.chars, events: s.events, plan: s.plan, style: s.style, calls: s.calls, changesets: s.changesets };
