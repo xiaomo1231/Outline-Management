@@ -14,6 +14,7 @@ import Write from "./pages/Write";
 import Outline from "./pages/outline/Outline";
 import Style from "./pages/Style";
 import Memory, { runAll } from "./pages/Memory";
+import * as arc from "./lib/ai/archive";
 import Settings from "./pages/Settings";
 import Assistant from "./components/Assistant";
 
@@ -177,8 +178,12 @@ function useScheduler(workId: string | null) {
     };
     const t0 = setTimeout(check, 8000);
     const t = setInterval(check, 60_000);
+    // 上次关窗前改了还没来得及归档的章，打开后补上
+    const t1 = setTimeout(() => void arc.catchUpRecent(workId).catch(() => {}), 20_000);
     return () => {
       clearTimeout(t0);
+      clearTimeout(t1);
+      arc.cancelPending();
       clearInterval(t);
     };
   }, [workId]);

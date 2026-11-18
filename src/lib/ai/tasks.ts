@@ -1,6 +1,6 @@
 // 各个 AI 功能的提示词和返回格式。界面拿到结果后用 aiEdit 写入，所以都能整组撤销。
 import { chat, chatJson, type Msg } from "./client";
-import { type Ctx, NATURAL, chapterContext, outlineOf, stablePrefix } from "./context";
+import { type Ctx, NATURAL, chapterContext, outlineOf, priorStory, stablePrefix } from "./context";
 import { GROUPS, fieldLabel, SIMPLE } from "../charFields";
 import type { Character, Scene, StoryEvent, StyleBlock, StyleDims } from "../types";
 import { allChapters, type ChRef } from "../outline";
@@ -186,16 +186,17 @@ export interface ChangeOut {
 /* ---------- 大纲 ---------- */
 
 export async function splitScenes(c: Ctx, sentence: string, r: ChRef): Promise<Scene[]> {
+  const prior = await priorStory(c, r.no);
   const res = await chatJson<{ scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string }[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只给结构，不写正文和对白。")),
-      user(`把这一句拆成 2–4 个场景，放进第${r.no}章。
+      user(`${prior.text ? prior.text + "\n\n" : ""}把这一句拆成 2–4 个场景，放进第${r.no}章。
 一句话：${sentence}
 
 本章现有大纲：
 ${outlineOf(c, r)}
 
-每个场景给标题、目标、冲突、出场人物；如果顺带埋或收伏笔就写上。不要写具体对白和描写。
+每个场景给标题、目标、冲突、出场人物；如果顺带埋或收伏笔就写上。不要写具体对白和描写。${prior.text ? "\n第一个场景要从上一章结束时的局面接着开始，出场人物要包括上一章结尾还和主角在一起的人（除非这一句明确写了他们离开）。" : ""}
 返回 JSON：{"scenes":[{"t":"","goal":"","conf":"","who":[""],"plant":"","pay":""}]}`),
     ],
     { temperature: 1.0 },
@@ -214,18 +215,18 @@ export interface SplitChapter {
 export async function splitVolume(c: Ctx, v: number, n: number): Promise<SplitChapter[]> {
   const vol = c.vols[v];
   const chs = allChapters(c.vols).filter((r) => r.v === v);
-  const before = allChapters(c.vols).filter((r) => r.v < v).slice(-3);
+  const firstNo = chs[0]?.no ?? allChapters(c.vols).filter((r) => r.v < v).length + 1;
+  const prior = await priorStory(c, firstNo);
   const res = await chatJson<{ chapters: SplitChapter[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只给结构和情节走向，不写正文和对白。")),
       user(`把下面这一卷的大纲拆成 ${n} 章，按顺序给出每章的章名、本章大纲（2–4 句，写清这一章发生什么、推进了什么）、章末钩子，以及 2–4 个场景（标题、目标、冲突、出场人物，顺带埋或收的伏笔，能确定的话给故事里的第几天和地点）。
 节奏要有起伏：铺垫、推进、转折、高潮分布开，不要每章都是高潮。只用卷大纲和已有设定里的人物和事，不要编造重大新设定。
-
+${prior.text ? "第一章要从下面「前文」最后的局面接着开始，不要跳过或重置前文留下的处境。\n\n" + prior.text + "\n" : ""}
 卷名：${vol?.title ?? ""}
 卷大纲：
 ${vol?.outline ?? ""}
 ${chs.some((r) => r.ch.title || r.ch.ol || r.ch.scenes.length) ? "\n这一卷已经有的章（作者写的，要保留它们的意思，接着补全）：\n" + chs.map((r) => outlineOf(c, r)).join("\n") : ""}
-${before.length ? "\n上一卷最后几章：\n" + before.map((r) => `第${r.no}章 ${r.ch.title}${r.ch.ol ? "：" + r.ch.ol : ""}${r.ch.summary ? "（摘要：" + r.ch.summary + "）" : ""}`).join("\n") : ""}
 
 返回 JSON：{"chapters":[{"t":"章名","ol":"本章大纲","hook":"章末钩子","scenes":[{"t":"","goal":"","conf":"","who":[""],"plant":"","pay":"","day":null,"place":""}]}]}`),
     ],
@@ -240,16 +241,51 @@ ${before.length ? "\n上一卷最后几章：\n" + before.map((r) => `第${r.no}
 }
 
 export async function fillScene(c: Ctx, r: ChRef, s: Scene): Promise<{ goal?: string; conf?: string }> {
+  const prior = await priorStory(c, r.no, { n: 3, bible: false });
   return chatJson(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只补空白，不改作者写的。")),
-      user(`第${r.no}章的场景「${s.t}」缺目标或冲突，请补上。
+      user(`${prior.text ? prior.text + "\n\n" : ""}第${r.no}章的场景「${s.t}」缺目标或冲突，请补上。
 本章大纲：
 ${outlineOf(c, r)}
 返回 JSON：{"goal":"${s.goal ? "（已有，返回空字符串）" : ""}","conf":"${s.conf ? "（已有，返回空字符串）" : ""}"}`),
     ],
     { temperature: 0.9 },
   );
+}
+
+export interface AlignFix {
+  no: number;
+  /** 新的本章大纲，不用改就空 */
+  ol?: string;
+  /** 要改的场景：i 是场景序号（从 0 开始） */
+  scenes?: { i: number; goal?: string; conf?: string; who?: string[] }[];
+  why: string;
+}
+
+/** 前文改了：检查后面还没写正文的章，大纲哪里和新的前文对不上，给出最小改动 */
+export async function alignOutlines(c: Ctx, changedNo: number, what: string, written: Set<string>): Promise<AlignFix[]> {
+  const later = allChapters(c.vols).filter((r) => r.no > changedNo && !written.has(r.ch.id)).slice(0, 10);
+  if (!later.length) return [];
+  const prior = await priorStory(c, later[0].no);
+  const res = await chatJson<{ chapters: AlignFix[] }>(
+    [
+      sys(await stablePrefix(c, "你是小说大纲助手。作者改了前文，你帮他把后面的大纲对齐。只做必要的最小改动，保留作者原来的意图和写法。")),
+      user(`作者刚改了第${changedNo}章，改动是：${what}
+
+${prior.text}
+
+后面还没写正文的章的大纲：
+${later.map((r) => outlineOf(c, r).replace(/场景(\d+)「/g, (_m, n) => `场景${n}（i=${+n - 1}）「`)).join("\n\n")}
+
+逐章检查：哪些地方和新的前文对不上（人物去向、在不在场、处境、关键物品、已经发生过的事）。只列需要改的章，不用改的不要列。
+返回 JSON：{"chapters":[{"no":章号,"ol":"改后的本章大纲，不用改就空字符串","scenes":[{"i":场景序号,"goal":"","conf":"","who":["人物"]}],"why":"一句话说为什么改"}]}
+scenes 里只放要改的场景和要改的字段，不改的字段不要写。`),
+    ],
+    { temperature: 0.4 },
+  );
+  const nos = new Set(later.map((r) => r.no));
+  return (res.chapters ?? []).filter((x) => x && nos.has(+x.no)).map((x) => ({ no: +x.no, ol: x.ol ? String(x.ol) : "", scenes: Array.isArray(x.scenes) ? x.scenes.filter((y) => y && typeof y.i === "number") : [], why: String(x.why ?? "") }));
 }
 
 export interface TidyIssue {

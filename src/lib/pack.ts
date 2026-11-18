@@ -2,7 +2,7 @@
 import { getDb } from "./db";
 import type { Work } from "./types";
 
-export const PACK_TABLES = ["docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats"] as const;
+export const PACK_TABLES = ["docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive"] as const;
 
 export interface WorkPack {
   format: "moshu-work";

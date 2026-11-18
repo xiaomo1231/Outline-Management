@@ -243,7 +243,7 @@ export interface ChangeSet {
   undone?: boolean;
 }
 
-export type DocKind = "outline" | "chars" | "events" | "plan" | "style" | "calls" | "resident" | "bible" | "memlog" | "changesets" | "inspire" | "trash";
+export type DocKind = "outline" | "chars" | "events" | "plan" | "style" | "calls" | "resident" | "bible" | "memlog" | "changesets" | "inspire" | "trash" | "ripples";
 
 /** 回收站里的一项（章或场景）。作品的回收站在 works 表里 */
 export interface TrashItem {

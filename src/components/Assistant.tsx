@@ -3,7 +3,7 @@ import { useStore, toast } from "../lib/store";
 import * as repo from "../lib/repo";
 import * as mem from "../lib/memory";
 import { AiError, chat, errText, type Msg, type ToolDef } from "../lib/ai/client";
-import { stablePrefix, type Ctx } from "../lib/ai/context";
+import { priorStory, stablePrefix, type Ctx } from "../lib/ai/context";
 import { describe } from "../lib/chars";
 import { allChapters, findChapter, firstLine, guessDay, newChapter, newScene, plants, splitChapterOutline } from "../lib/outline";
 import { phaseName } from "../lib/plan";
@@ -95,6 +95,14 @@ async function locationAndRecall(c: Ctx, text: string, page: string, chapterId: 
       if (t?.plain) parts.push(`第${r.no}章正文（结尾 2000 字）：\n${t.plain.slice(-2000)}`);
     }
     if (r.ch.pl) parts.push(`第${r.no}章在篇幅规划里属于：${phaseName(c.plan, r.ch.pl)}`);
+    if (page === "outline") {
+      // 大纲页：带上到这一章为止的前文（读章节归档），出主意时接得上
+      const p = await priorStory(c, r.no + 1, { n: 5, bible: false });
+      if (p.text) {
+        parts.push(p.text);
+        refs.push(...p.refs);
+      }
+    }
   }
   if (selection) {
     parts.push("作者选中的文字：\n" + selection.slice(0, 2000));
