@@ -27,6 +27,9 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS text_work ON chapter_text(work_id)`,
   `CREATE TABLE IF NOT EXISTS chapter_versions(id TEXT PRIMARY KEY, chapter_id TEXT NOT NULL, work_id TEXT NOT NULL, html TEXT, plain TEXT, words INTEGER DEFAULT 0, at INTEGER NOT NULL, reason TEXT)`,
   `CREATE INDEX IF NOT EXISTS versions_ch ON chapter_versions(chapter_id, at)`,
+  // 章节归档：每章 AI 做的摘要、章末状态等，plain 是归档时的正文，用来比对改了多少
+  `CREATE TABLE IF NOT EXISTS chapter_archive(id TEXT PRIMARY KEY, work_id TEXT NOT NULL, at INTEGER NOT NULL, plain TEXT, data TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS archive_work ON chapter_archive(work_id)`,
 ];
 
 /** 给老数据库补列。列已存在时 SQLite 会报错，忽略即可 */

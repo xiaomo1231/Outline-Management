@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useStore, toast } from "../../lib/store";
 import { allChapters, applyVolumeSplit, dayLabel, findScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
 import { phaseName, where } from "../../lib/plan";
@@ -12,6 +12,7 @@ import type { Scene } from "../../lib/types";
 import { ctx, names } from "./ctx";
 import { trashChapter, trashScene } from "../../lib/trash";
 import * as repo from "../../lib/repo";
+import * as arc from "../../lib/ai/archive";
 
 /** 选中的章和场景（场景序号 -1 表示只选了章） */
 export interface Sel {
@@ -143,6 +144,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   return (
     <div className="split">
       <div>
+        <RippleBanner say={say} />
         <div className="panel" style={{ marginBottom: 12 }}>
           <h3>全书梗概</h3>
           <textarea
@@ -742,6 +744,146 @@ function SplitPreview({ vi, list, tl, done }: { vi: number; list: T.SplitChapter
         }}
       >
         写进大纲（{on.filter(Boolean).length} 章）
+      </button>
+    </div>
+  );
+}
+
+/** 前文改了、改掉了影响后文的东西：提醒对齐后面的大纲 */
+function RippleBanner({ say }: { say: Say }) {
+  const work = useStore((s) => s.work);
+  const vols = useStore((s) => s.vols);
+  const [list, setList] = useState<arc.Ripple[]>([]);
+  useEffect(() => {
+    if (!work) return;
+    const load = () => arc.ripples(work.id).then(setList);
+    load();
+    return arc.onChange(load);
+  }, [work?.id]);
+  const chs = allChapters(vols);
+  const shown = list.filter((x) => chs.some((r) => r.ch.id === x.ch));
+  if (!work || !shown.length) return null;
+  return (
+    <div className="panel" style={{ marginBottom: 12, background: "var(--seal-soft)" }}>
+      <h3>前文改了，后面的大纲可能对不上</h3>
+      {shown.map((x) => {
+        const r = chs.find((y) => y.ch.id === x.ch)!;
+        return (
+          <div key={x.id} style={{ marginBottom: 8 }}>
+            <p style={{ margin: "0 0 4px" }}>
+              <b>第{r.no}章</b>：{x.what}
+            </p>
+            <div className="addrow" style={{ marginTop: 0 }}>
+              <AsyncButton
+                primary
+                onClick={async () => {
+                  say(<Empty>正在对照新的第{r.no}章，检查后面还没写正文的章……</Empty>);
+                  try {
+                    const texts = await repo.allTexts(work.id);
+                    const written = new Set(texts.filter((t) => t.words >= 200).map((t) => t.id));
+                    const c = ctx();
+                    const fixes = await T.alignOutlines(c, r.no, x.what, written);
+                    const ids = new Map(allChapters(c.vols).map((y) => [y.no, y.ch.id]));
+                    const laterWritten = allChapters(c.vols).filter((y) => y.no > r.no && written.has(y.ch.id)).map((y) => y.no);
+                    say(<AlignPreview fixes={fixes.map((f) => ({ ...f, id: ids.get(f.no)! })).filter((f) => f.id)} laterWritten={laterWritten} done={(n) => { say(n); arc.dismissRipple(work.id, x.id); }} />);
+                  } catch (e) {
+                    say(<p className="lint bad">{errText(e)}</p>);
+                  }
+                }}
+              >
+                让 AI 对齐后续大纲
+              </AsyncButton>
+              <button className="btn" type="button" onClick={() => arc.dismissRipple(work.id, x.id)}>
+                不用，忽略
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AlignPreview({ fixes, laterWritten, done }: { fixes: (T.AlignFix & { id: string })[]; laterWritten: number[]; done: (n: ReturnType<typeof Empty>) => void }) {
+  const vols = useStore((s) => s.vols);
+  const [on, setOn] = useState<boolean[]>(() => fixes.map(() => true));
+  const note = laterWritten.length ? <p className="empty" style={{ margin: "0 0 8px" }}>第{laterWritten.slice(0, 8).join("、")}{laterWritten.length > 8 ? "等" : ""}章已经写了正文，没有动，需要的话自己对一下。</p> : null;
+  if (!fixes.length)
+    return (
+      <div>
+        <p style={{ margin: "0 0 4px" }}>后面还没写正文的章大纲和新的前文对得上，不用改。</p>
+        {note}
+        <button className="btn" type="button" onClick={() => done(<Empty>已确认，不用改。</Empty>)}>
+          好的
+        </button>
+      </div>
+    );
+  return (
+    <div>
+      <p style={{ margin: "0 0 4px" }}>
+        <b>对齐预览</b>
+      </p>
+      <p className="empty" style={{ margin: "0 0 8px" }}>
+        勾选要改的章。只改列出来的字段，场景不增不删。
+      </p>
+      {note}
+      {fixes.map((f, i) => {
+        const r = allChapters(vols).find((y) => y.ch.id === f.id);
+        if (!r) return null;
+        return (
+          <label className="sy-i" key={i}>
+            <input type="checkbox" checked={on[i]} onChange={(e) => setOn(on.map((v, j) => (j === i ? e.target.checked : v)))} />
+            <span>
+              <b>
+                第{r.no}章 {r.ch.title}
+              </b>
+              <small>{f.why}</small>
+              {f.ol && (
+                <small>
+                  大纲：<s>{r.ch.ol || "（空）"}</s> → {f.ol}
+                </small>
+              )}
+              {(f.scenes ?? []).map((sc, k) => {
+                const old = r.ch.scenes[sc.i];
+                if (!old) return null;
+                return (
+                  <small key={k}>
+                    场景「{old.t}」：{[sc.goal && `目标 → ${sc.goal}`, sc.conf && `冲突 → ${sc.conf}`, sc.who?.length && `人物 → ${sc.who.join("、")}`].filter(Boolean).join("；")}
+                  </small>
+                );
+              })}
+            </span>
+          </label>
+        );
+      })}
+      <button
+        className="btn primary"
+        type="button"
+        disabled={!on.some(Boolean)}
+        onClick={() => {
+          let n = 0;
+          useStore.getState().aiEdit("前文改动后对齐后续大纲", ["vols"], (d) => {
+            fixes.forEach((f, i) => {
+              if (!on[i]) return;
+              const r = allChapters(d.vols as any).find((y) => y.ch.id === f.id);
+              if (!r) return;
+              const ch = d.vols[r.v].chapters[r.c];
+              if (f.ol) ch.ol = f.ol;
+              for (const sc of f.scenes ?? []) {
+                const s = ch.scenes[sc.i];
+                if (!s) continue;
+                if (sc.goal) s.goal = sc.goal;
+                if (sc.conf) s.conf = sc.conf;
+                if (sc.who?.length) s.who = sc.who.filter(Boolean);
+              }
+              n++;
+            });
+          });
+          toast(`已对齐 ${n} 章大纲`);
+          done(<Empty>已对齐 {n} 章大纲。不满意可以在「记忆」页的变更记录里整组撤销。</Empty>);
+        }}
+      >
+        改这 {on.filter(Boolean).length} 章
       </button>
     </div>
   );

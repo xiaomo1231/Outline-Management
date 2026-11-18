@@ -33,7 +33,7 @@ export async function saveWork(w: Work) {
 
 export async function deleteWork(id: Id) {
   const db = await getDb();
-  for (const t of ["docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats"]) await db.exec(`DELETE FROM ${t} WHERE work_id=?`, [id]);
+  for (const t of ["docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive"]) await db.exec(`DELETE FROM ${t} WHERE work_id=?`, [id]);
   await db.exec(`DELETE FROM works WHERE id=?`, [id]);
 }
 
@@ -84,6 +84,7 @@ export async function deleteText(id: Id) {
   const db = await getDb();
   await db.exec(`DELETE FROM chapter_text WHERE id=?`, [id]);
   await db.exec(`DELETE FROM chapter_versions WHERE chapter_id=?`, [id]);
+  await db.exec(`DELETE FROM chapter_archive WHERE id=?`, [id]);
 }
 
 /** 删章时正文只做标记，回收站可以恢复 */
@@ -200,4 +201,26 @@ export async function listDiary(work: Id, n = 30) {
 export async function saveDiary(work: Id, day: string, text: string) {
   const db = await getDb();
   await db.exec(`INSERT OR REPLACE INTO diary(work_id, day, text) VALUES(?,?,?)`, [work, day, text]);
+}
+
+/* ---------- 章节归档 ---------- */
+
+export interface ArchiveRow {
+  id: Id;
+  work_id: Id;
+  at: number;
+  plain: string;
+  data: string;
+}
+export async function loadArchive(id: Id): Promise<ArchiveRow | null> {
+  const db = await getDb();
+  return (await db.all<ArchiveRow>(`SELECT * FROM chapter_archive WHERE id=?`, [id]))[0] ?? null;
+}
+export async function allArchives(work: Id): Promise<ArchiveRow[]> {
+  const db = await getDb();
+  return db.all<ArchiveRow>(`SELECT * FROM chapter_archive WHERE work_id=?`, [work]);
+}
+export async function saveArchive(work: Id, id: Id, plain: string, data: unknown, at = Date.now()) {
+  const db = await getDb();
+  await db.exec(`INSERT OR REPLACE INTO chapter_archive(id, work_id, at, plain, data) VALUES(?,?,?,?,?)`, [id, work, at, plain, JSON.stringify(data)]);
 }

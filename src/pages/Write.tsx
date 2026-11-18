@@ -25,6 +25,7 @@ import * as T from "../lib/ai/tasks";
 import { errText } from "../lib/ai/client";
 import type { Ctx } from "../lib/ai/context";
 import { phaseName } from "../lib/plan";
+import * as arc from "../lib/ai/archive";
 
 function ctx(): Ctx {
   const s = useStore.getState();
@@ -141,6 +142,7 @@ export default function Write() {
   const saveNow = async (id: string, snap: Snap) => {
     try {
       const r = await persistChapter(work.id, id, snap);
+      arc.noteEdit(id);
       setWords((m) => ({ ...m, [id]: snap.words }));
       if (r.delta) setTodayWords((x) => x + r.delta);
       if (r.shrunk) shrinkToast(r.shrunk);
@@ -183,7 +185,11 @@ export default function Write() {
     if (prev) {
       const snap = snapOf(editor);
       const p = save.pending() ? save.flush(prev, editor) : Promise.resolve();
-      p.then(() => snapshot(work.id, prev, snap, "离开本章")).catch(() => {});
+      p.then(() => snapshot(work.id, prev, snap, "离开本章"))
+        .catch(() => {})
+        // 离开这一章：不等 2 分钟，马上看要不要归档
+        .then(() => arc.check(prev))
+        .catch(() => {});
     }
     loadedFor.current = null;
     repo.loadText(id).then((t) => {
@@ -645,12 +651,21 @@ export default function Write() {
                 className="btn"
                 value={cur.ch.status}
                 aria-label="状态"
-                onChange={(e) => edit("vols", (d) => void (d[cur.v].chapters[cur.c].status = e.target.value as any))}
+                onChange={(e) => {
+                  const v = e.target.value as any;
+                  edit("vols", (d) => void (d[cur.v].chapters[cur.c].status = v));
+                  // 标成「已写」：存完马上归档
+                  if (v === "已写") {
+                    const id = cur.ch.id;
+                    (save.pending() && editor ? save.flush(id, editor) : Promise.resolve()).then(() => arc.check(id)).catch(() => {});
+                  }
+                }}
               >
                 <option>大纲</option>
                 <option>写作中</option>
                 <option>已写</option>
               </select>
+              <ArchiveBtn id={cur.ch.id} flush={() => (save.pending() && editor ? save.flush(cur.ch.id, editor) : Promise.resolve())} />
             </div>
             <div className="chap-meta">
               {cur.ch.scenes.length} 个场景{cur.ch.pl ? " · " + phaseName(plan, cur.ch.pl) : ""} · 本章 {chWords} 字
@@ -1237,6 +1252,7 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
       await snapshot(workId, r.id, { html: t.html, plain: t.plain, words: t.words, ai: t.ai_chars }, "全书替换前");
       const plain = htmlToText(out.html);
       await repo.saveText(workId, r.id, out.html, plain, countWords(plain), t.ai_chars);
+      arc.noteEdit(r.id);
       n += out.n;
     }
     refreshWords();
@@ -1339,5 +1355,31 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
         </>
       )}
     </div>
+  );
+}
+
+/** 「归档本章」：马上让 AI 给这一章做摘要和章末状态 */
+function ArchiveBtn({ id, flush }: { id: string; flush: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(arc.busy.has(id));
+  useEffect(() => {
+    setBusy(arc.busy.has(id));
+    return arc.onChange(() => setBusy(arc.busy.has(id)));
+  }, [id]);
+  return (
+    <AsyncButton
+      title="让 AI 给这一章写摘要、记下章末每个人物的状态。平时写完、改完会自动做，这里可以马上做一次"
+      disabled={busy}
+      onClick={async () => {
+        try {
+          await flush();
+          const r = await arc.check(id, { force: true });
+          toast(r === "same" ? "这一章自上次归档后没有改动" : r === "none" ? "这一章还没有正文" : "本章已归档");
+        } catch (e) {
+          toast(errText(e));
+        }
+      }}
+    >
+      {busy ? "归档中…" : "归档本章"}
+    </AsyncButton>
   );
 }

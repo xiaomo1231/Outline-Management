@@ -121,7 +121,7 @@ export async function pullChapter(name: string, work: string, ch: string): Promi
   }
 }
 
-const TABLES = ["works", "docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "settings", "usage"];
+const TABLES = ["works", "docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive", "settings", "usage"];
 
 /** 整库恢复：先给现在的库备份一份，再把备份里的每张表抄回来。之后要重新加载页面 */
 export async function restoreAll(name: string, onStep?: (s: string) => void): Promise<void> {

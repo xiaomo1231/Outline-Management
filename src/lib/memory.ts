@@ -43,6 +43,22 @@ export async function addItem(work: Id, kind: MemItem["kind"], text: string, ch:
   await db.exec(`INSERT INTO memory(id, work_id, layer, kind, text, short, ch, hits, last_hit, score, created, updated, src) VALUES(?,?,?,?,?,?,?,0,0,0,?,?,?)`, [uid("m"), work, layer, kind, text, shorten(text), ch, now, now, src]);
 }
 
+/** 章节归档写进来的事实：src 记成「归档:章id」，重新归档时整组替换，内容没变的旧条目连同命中次数保留 */
+export async function replaceChapterFacts(work: Id, chId: Id, no: number, facts: string[]) {
+  const db = await getDb();
+  const src = "归档:" + chId;
+  const old = await db.all<MemItem>(`SELECT * FROM memory WHERE work_id=? AND src=?`, [work, src]);
+  const keep = new Set(old.filter((x) => facts.includes(x.text)).map((x) => x.text));
+  for (const x of old) if (!keep.has(x.text)) await db.exec(`DELETE FROM memory WHERE id=?`, [x.id]);
+  const existing = new Set((await db.all<{ text: string }>(`SELECT text FROM memory WHERE work_id=?`, [work])).map((x) => x.text));
+  for (const f of facts) if (!existing.has(f)) {
+    existing.add(f);
+    await addItem(work, "fact", f, no, src);
+  }
+  // 章号可能因为插章变了，顺手更新
+  await db.exec(`UPDATE memory SET ch=? WHERE work_id=? AND src=?`, [no, work, src]);
+}
+
 export async function updateItem(id: Id, patch: Partial<Pick<MemItem, "text" | "layer" | "kind">>) {
   const db = await getDb();
   const sets = Object.keys(patch).map((k) => `${k}=?`);

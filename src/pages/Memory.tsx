@@ -1,6 +1,6 @@
 import { Guide } from "../components/Guide";
 import { fmtTime } from "../lib/util";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore, toast } from "../lib/store";
 import * as mem from "../lib/memory";
 import * as repo from "../lib/repo";
@@ -8,20 +8,22 @@ import { compileStyle } from "../lib/style";
 import { MEM_DEFAULT, useSetting, type MemPrefs } from "../lib/hooks";
 import { AsyncButton, Empty, Seg } from "../components/ui";
 import { modelRun } from "../lib/ai/nightly";
+import * as arc from "../lib/ai/archive";
 import { errText } from "../lib/ai/client";
 import { ctx } from "./outline/ctx";
 import type { MemItem } from "../lib/types";
 
 type Tab = "health" | "items" | "resident" | "bible" | "diary" | "changes";
 
-export async function runAll(onStep?: (s: string) => void) {
+/** 每日整理。force：手动点「现在整理」时，不管设置里开没开，都跑 AI 整理 */
+export async function runAll(onStep?: (s: string) => void, force = false) {
   const s = useStore.getState();
   if (!s.work) return;
   const prefs = { ...MEM_DEFAULT, ...(await repo.getSetting<Partial<MemPrefs>>("memory", {})) };
   onStep?.("自动整理：备份、结算、升降层");
   const a = await mem.scriptRun(s.work, s.vols);
   if (!a.ok) return a;
-  if (!prefs.autoModel) return a;
+  if (!prefs.autoModel && !force) return a;
   try {
     return await modelRun(ctx(), prefs.residentLimit, onStep);
   } catch (e) {
@@ -57,13 +59,14 @@ export default function Memory() {
         id="memory"
         title="记忆页里这些词是什么意思"
         steps={[
+          "章节归档：每章写完、改过之后，AI 在后台给这一章写摘要、记下章末每个人物的状态、新事实和人设变化（每章约一分钱）。生成大纲和正文时的“前文”就读这些。",
           "每日整理：每天到点（默认 22:05）自动把今天写的内容归档进记忆。分两步：",
           "自动整理：不花钱，负责备份、统计哪些记忆被用到、调整记忆的远近层级。",
-          "AI 整理：调 DeepSeek（会花一点 API 费），给新章节写摘要、记人设变化、写写作日记。默认不自动跑，可以在设置里打开，或在这里手动点。",
+          "AI 整理：调 DeepSeek（会花一点 API 费），补归档漏掉的章、写写作日记、整理核心摘要和设定集。每晚自动跑默认关，可以在设置里打开；在这里点「现在整理」会立刻跑一次。",
           "核心摘要：每次调用 AI 都会带上的一页“这本书的要点”，越短越准。",
           "设定集：已经定下、以后不能推翻的设定和事实，AI 检查矛盾时会对照它。",
         ]}
-        tip="不想管这些也没关系，不打开 AI 整理，写作和大纲照常能用。"
+        tip="不想管这些也没关系：章节归档会自动进行，写作和大纲照常能用。"
       />
       {tab === "health" && <HealthTab key={ver} work={work.id} refresh={refresh} />}
       {tab === "items" && <ItemsTab work={work.id} />}
@@ -76,7 +79,7 @@ export default function Memory() {
 }
 
 function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
-  const [prefs] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
+  const [prefs, setPrefs, prefsReady] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [h, setH] = useState<mem.Health | null>(null);
   const [log, setLog] = useState<mem.MemLogEntry[]>([]);
   const [step, setStep] = useState("");
@@ -109,7 +112,7 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
           <AsyncButton
             primary
             onClick={async () => {
-              await runAll(setStep);
+              await runAll(setStep, true);
               setStep("");
               refresh();
               toast("整理完成");
@@ -127,8 +130,17 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
           </AsyncButton>
         </div>
         {step && <p className="legend">{step}……</p>}
+        {prefsReady && !prefs.autoModel && (
+          <div className="lint" style={{ marginTop: 10, padding: "8px 10px", borderRadius: 6, background: "var(--seal-soft)" }}>
+            <b>每晚的 AI 整理没打开。</b>白天写完的章仍会自动归档（需要填好 DeepSeek 密钥），但写作日记、核心摘要、设定集不会每晚更新，漏归档的章也不会每晚补上。
+            <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+              <input type="checkbox" checked={prefs.autoModel} onChange={(e) => setPrefs({ ...prefs, autoModel: e.target.checked })} /> 每日整理时顺便跑 AI 整理（会花一点 API 费）
+            </label>
+          </div>
+        )}
+        <ArchivePanel work={work} />
         <p className="legend">
-          每天 {prefs.dailyAt} 自动做每日整理；关闭应用时、下次打开发现漏跑时也会补跑。自动整理不花 API 费；AI 整理调 DeepSeek，给新写的章节做摘要、记人设变化、写日记、整理核心摘要和设定集。
+          每天 {prefs.dailyAt} 自动做每日整理；关闭应用时、下次打开发现漏跑时也会补跑。自动整理不花 API 费；AI 整理调 DeepSeek，补归档漏掉的章、写日记、整理核心摘要和设定集。
         </p>
       </div>
       <div className="panel">
@@ -150,6 +162,80 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
           <Empty>还没有整理记录。</Empty>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 章节归档：几章已归档、几章没归档，补归档全部 */
+function ArchivePanel({ work }: { work: string }) {
+  const [left, setLeft] = useState<{ n: number; cost: number } | null>(null);
+  const [total, setTotal] = useState(0);
+  const [prog, setProg] = useState<{ done: number; total: number; cur: string } | null>(null);
+  const abort = useRef<AbortController | null>(null);
+  const load = async () => {
+    const st = useStore.getState();
+    const list = await arc.stale(work, st.vols);
+    const texts = new Map((await repo.allTexts(work)).map((t) => [t.id, t.words]));
+    setLeft({ n: list.length, cost: arc.estimateCost(list.map((r) => texts.get(r.ch.id) ?? 0)) });
+    setTotal((await repo.allArchives(work)).length);
+  };
+  useEffect(() => {
+    load();
+    return arc.onChange(() => {
+      if (!abort.current) load();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [work]);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <h3>章节归档</h3>
+      <p className="legend" style={{ marginTop: 0 }}>
+        每章写完、改过之后（停手 2 分钟、离开这一章、或状态改成「已写」），AI 会在后台给这一章写摘要、记下章末每个人物的状态。生成大纲和正文时，“前文”就读这些归档。
+      </p>
+      {left ? (
+        <p>
+          已归档 {total} 章{left.n ? `，还有 ${left.n} 章没归档或归档后改动较大` : "，没有要补的"}。
+        </p>
+      ) : (
+        <Empty>读取中……</Empty>
+      )}
+      {prog ? (
+        <div>
+          <progress max={prog.total} value={prog.done} style={{ width: "100%" }} />
+          <p className="legend">
+            {prog.done}/{prog.total}
+            {prog.cur ? ` · 正在归档${prog.cur}` : ""}
+          </p>
+          <button className="btn sm" type="button" onClick={() => abort.current?.abort()}>
+            停止
+          </button>
+        </div>
+      ) : (
+        !!left?.n && (
+          <AsyncButton
+            onClick={async () => {
+              if (!confirm(`要补归档 ${left.n} 章吗？\n按 DeepSeek 价格粗估约 ${Math.max(0.01, left.cost).toFixed(2)} 元（实际以账单为准）。几章同时跑，可以中途停止。`)) return;
+              abort.current = new AbortController();
+              setProg({ done: 0, total: left.n, cur: "" });
+              try {
+                const list = await arc.stale(work, useStore.getState().vols);
+                const r = await arc.archiveMany(list, (done, total, cur) => setProg((p) => ({ done, total, cur: cur || p?.cur || "" })), abort.current.signal, 3);
+                const st = useStore.getState();
+                if (r.ok && st.work) await mem.scriptRun(st.work, st.vols);
+                toast(`补归档完成：${r.ok} 章${r.failed ? `，失败 ${r.failed} 章：${r.err}` : ""}${abort.current.signal.aborted ? "（已停止）" : ""}`);
+              } catch (e) {
+                toast(errText(e));
+              } finally {
+                abort.current = null;
+                setProg(null);
+                load();
+              }
+            }}
+          >
+            补归档全部
+          </AsyncButton>
+        )
+      )}
     </div>
   );
 }

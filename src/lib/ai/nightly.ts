@@ -1,20 +1,17 @@
-// AI 整理：自动整理跑完后才动。给新写的章节做摘要、提取人设变化和新事实、写写作日记、整理核心摘要和设定集。
-import { chat, chatJson } from "./client";
+// AI 整理：自动整理跑完后才动。补归档漏掉的章节、写写作日记、整理核心摘要和设定集。
+import { chat } from "./client";
 import type { Ctx } from "./context";
 import { useStore } from "../store";
 import * as repo from "../repo";
 import * as mem from "../memory";
 import { allChapters } from "../outline";
-import { fieldLabel, isLocked } from "../charFields";
+import { fieldLabel } from "../charFields";
 import { compileStyle } from "../style";
-import { today, uid } from "../util";
-import type { CharChange } from "../types";
+import { today } from "../util";
+import { archiveMany, archiveMap, stale } from "./archive";
 
-interface ChapterDigest {
-  summary: string;
-  facts: string[];
-  changes: { name: string; field: string; to: string; cause: string; quote: string }[];
-}
+/** 每晚最多补归档几章，再多就到记忆页手动「补归档全部」 */
+export const NIGHT_LIMIT = 30;
 
 export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: string) => void): Promise<mem.MemLogEntry> {
   const lines: string[] = [];
@@ -26,52 +23,14 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
     return e;
   }
   try {
-    // 1. 新写或改过的章节：摘要 + 新事实 + 人设变化
+    // 1. 补归档：白天每章写完会自动归档，这里补上漏掉的（没填密钥时、关窗前没来得及的）
     const texts = await repo.allTexts(c.work.id);
-    const chs = allChapters(c.vols);
-    const todo = chs.filter((r) => {
-      const t = texts.find((x) => x.id === r.ch.id);
-      return t && t.words > 200 && (!r.ch.summaryAt || t.updated > r.ch.summaryAt);
-    }).slice(0, 8);
-    let nChanges = 0;
-    let nConflict = 0;
-    let nFacts = 0;
-    const keys = [...new Set(["id", "class", "power", "clothes", "acc", "want", "rel", "core", "look", "hair", "fear", "values"])];
-    for (const r of todo) {
-      onStep?.(`读第 ${r.no} 章`);
-      const t = texts.find((x) => x.id === r.ch.id)!;
-      const people = c.chars.filter((x) => x.name && t.plain.includes(x.name));
-      const d = await chatJson<ChapterDigest>([
-        { role: "system", content: "你是小说的记忆整理员。只记录正文里确实写到的内容。" },
-        { role: "user", content: `第${r.no}章正文：\n${t.plain.slice(0, 30000)}\n\n出场人物现有设定：\n${people.map((p) => `${p.name}：` + keys.filter((k) => p.f[k]).map((k) => `${k}(${fieldLabel(k)})=${p.f[k]}`).join("；")).join("\n") || "无"}\n\n返回 JSON：\n{"summary":"150 字以内的章节摘要","facts":["这一章确立的、以后要记住的事实，每条一句，最多 8 条"],"changes":[{"name":"人物","field":"字段键（从上面的键里选）","to":"新值","cause":"触发事件","quote":"原文短引用"}]}\n人设变化只记真正改变了的（身份、处境、关系、外观、能力、动机等），没有就空数组。` },
-      ], { temperature: 0.2 });
-      const now = Date.now();
-      const conflicts: string[] = [];
-      useStore.getState().aiEdit(`第${r.no}章每日整理：摘要和人设变化`, ["vols", "chars"], (dr) => {
-        const ch = dr.vols[r.v]?.chapters[r.c];
-        if (ch) {
-          ch.summary = d.summary;
-          ch.summaryAt = now;
-        }
-        for (const x of d.changes ?? []) {
-          const p = dr.chars.find((y) => y.name === x.name);
-          if (!p || !x.field || !x.to) continue;
-          const lock = isLocked(p, x.field);
-          const cc: CharChange = { id: uid("cc"), ch: r.ch.id, field: x.field, from: p.f[x.field] || "", to: x.to, cause: x.cause, quote: x.quote, by: "ai", at: now, status: lock ? "conflict" : "applied" };
-          (p.changes ??= []).push(cc);
-          if (lock) conflicts.push(`${p.name}的${fieldLabel(x.field)}`);
-          else nChanges++;
-        }
-      });
-      nConflict += conflicts.length;
-      for (const f of d.facts ?? []) {
-        await mem.voteNew(c.work.id, "fact", f, r.no, `第${r.no}章`);
-        nFacts++;
-      }
-    }
-    lines.push(`摘要 ${todo.length} 章，人设变化 ${nChanges} 条${nConflict ? `，锁定项冲突 ${nConflict} 条待你处理` : ""}，新事实 ${nFacts} 条。`);
-    // 新事实当场入层
-    if (nFacts) {
+    const left = await stale(c.work.id, c.vols);
+    const todo = left.slice(0, NIGHT_LIMIT);
+    const arc = todo.length ? await archiveMany(todo, (d, n, cur) => cur && onStep?.(`归档 ${cur}（${d}/${n}）`), undefined, 3) : { ok: 0, failed: 0, err: undefined };
+    lines.push(`补归档 ${arc.ok} 章${arc.failed ? `，失败 ${arc.failed} 章（${arc.err}）` : ""}${left.length > todo.length ? `，还剩 ${left.length - todo.length} 章没归档，可以在记忆页点「补归档全部」` : ""}。`);
+    // 归档写进来的新事实当场入层
+    if (arc.ok) {
       const st = useStore.getState();
       await mem.scriptRun(st.work!, st.vols);
     }
@@ -105,7 +64,13 @@ export async function modelRun(c: Ctx, residentLimit: number, onStep?: (s: strin
     // 4. 设定集：只提炼「这本书定下了什么」
     onStep?.("更新设定集");
     const bible = await mem.getBible(c.work.id);
-    const sums = todo.map((r) => `第${r.no}章：${s.vols[r.v]?.chapters[r.c]?.summary ?? ""}`).join("\n");
+    // 设定集上次更新之后归档过的章（包括白天自动归档的）
+    const arcs = await archiveMap(c.work.id);
+    const sums = allChapters(s.vols)
+      .filter((r) => (arcs.get(r.ch.id)?.at ?? 0) > bible.at)
+      .slice(-40)
+      .map((r) => `第${r.no}章：${arcs.get(r.ch.id)!.summary}`)
+      .join("\n");
     if (sums) {
       const b = await chat([
         { role: "system", content: "你维护小说的「设定集」：只记已经确立、以后不能推翻的设定和事实，按类别分组（世界规则、人物定论、重要物件、地点、时间线定点）。保留已有条目，加入新的，删除重复。直接输出全文。" },
