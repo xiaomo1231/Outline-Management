@@ -21,7 +21,7 @@ function chapOf(line: string, tight: string): { head: string; name: string } | n
 /** 「第一章雾港」这种紧凑写法认哪些「章/回/节」字：
  *  - 有「第X章 章名」时认它们最常用的那个字，免得「第一章 雾港」的书里单独一行的「第三节课」被切成一章；
  *    另外紧凑写法的「章/回」出现两次以上也认（「第一章雾港」下面分「第一节 初到」的书）
- *  - 全书没有宽松标题时，紧凑写法要出现两次以上才认，免得没分章的短篇里一行「第三节课」被切成一章 */
+ *  - 全书没有宽松标题时，紧凑写法的「章/回」出现一次就认，「节」要出现两次以上，免得没分章的短篇里一行「第三节课」被切成一章 */
 function tightOf(lines: string[]): string {
   const loose = new Map<string, number>();
   const tight = new Map<string, number>();
@@ -41,8 +41,10 @@ function tightOf(lines: string[]): string {
     return best;
   };
   if (!loose.size) {
-    const best = top(tight);
-    return best && tight.get(best)! >= 2 ? best : "";
+    // 「章/回」出现一次就认（只有一章的书、楔子加一章的书）；「节」常见于正文（「第三节课」），要两次以上
+    let ok = "";
+    for (const [k, n] of tight) if (n >= (k === "节" ? 2 : 1)) ok += k;
+    return ok;
   }
   let ok = top(loose);
   for (const [k, n] of tight) if (k !== "节" && n >= 2 && !ok.includes(k)) ok += k;

@@ -133,3 +133,24 @@ describe("R1 紧凑章名不误切正文", () => {
     expect(b.vols[0].chapters.map((c) => c.title)).toEqual(["雾港", "夜雨"]);
   });
 });
+
+describe("导入 TXT：没有宽松标题时的紧凑章名", () => {
+  const titles = (raw: string) => parseBook(raw).vols.flatMap((v) => v.chapters.map((c) => c.title));
+  it("只有一章「第一章雾港」也能切出来，书名作者简介留在开头", () => {
+    const b = parseBook("《雾港》\n作者：某人\n简介文字\n第一章雾港\n正文A");
+    expect(titles("《雾港》\n作者：某人\n简介文字\n第一章雾港\n正文A")).toEqual(["雾港"]);
+    expect(b.vols[0].chapters[0].text).toBe("正文A");
+    expect(b.preface).toContain("简介文字");
+  });
+  it("楔子加一章紧凑写法切成两章", () => {
+    expect(titles("楔子\n引文\n第一章雾港\n正文A")).toEqual(["楔子", "雾港"]);
+  });
+  it("没分章的短篇里一行「第三节课」不切章", () => {
+    const b = parseBook("他走进教室。\n第三节课\n老师来了。");
+    expect(b.vols.flatMap((v) => v.chapters).length).toBe(1);
+    expect(b.vols[0].chapters[0].text).toContain("第三节课");
+  });
+  it("「第一章雾港」下面分「第一节 初到」的书仍认出章标题", () => {
+    expect(titles("第一章雾港\n第一节 初到\nA\n第二节 夜\nB\n第二章夜雨\n第一节 再\nC")).toEqual(["雾港", "初到", "夜", "夜雨", "再"]);
+  });
+});
