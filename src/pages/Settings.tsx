@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "../lib/store";
 import { getSecret, setSecret } from "../lib/secret";
 import { DEFAULT_AI, listModels, chat, errText, type AiSettings } from "../lib/ai/client";
-import { MEM_DEFAULT, useSetting, type MemPrefs } from "../lib/hooks";
+import { MEM_DEFAULT, RESIDENT_MAX, RESIDENT_MIN, residentLimitOf, useSetting, type MemPrefs } from "../lib/hooks";
 import * as repo from "../lib/repo";
 import { isTauri, getDb } from "../lib/db";
 import { AsyncButton, Empty } from "../components/ui";
@@ -144,8 +144,19 @@ export default function Settings() {
           </label>
           <label>
             核心摘要上限（字）
-            <input type="number" min={1000} max={8000} step={500} value={memp.residentLimit} onChange={(e) => setMemp({ ...memp, residentLimit: +e.target.value })} />
+            <input
+              type="number"
+              min={RESIDENT_MIN}
+              max={RESIDENT_MAX}
+              step={1000}
+              value={memp.residentLimit}
+              onChange={(e) => setMemp({ ...memp, residentLimit: +e.target.value })}
+              onBlur={() => setMemp({ ...memp, residentLimit: residentLimitOf(memp) })}
+            />
           </label>
+          <p className="legend" style={{ gridColumn: "1 / -1", margin: 0 }}>
+            核心摘要是每次调用 AI 都会带上的“这本书的要点”，可以设 {RESIDENT_MIN.toLocaleString()}–{RESIDENT_MAX.toLocaleString()} 字，默认 10,000。调高能记住更多人物和剧情，但每次调用 AI 都要多带这些字，会多花钱：每多 1,000 字，每次调用大约多 0.1 分钱（按 DeepSeek 价格粗估，连续调用命中缓存时更便宜）。改完到「记忆」页点「现在整理」，就会按新上限重新整理。
+          </p>
           <label className="check">
             <span>
               <input type="checkbox" checked={memp.autoModel} onChange={(e) => setMemp({ ...memp, autoModel: e.target.checked })} /> 每日整理时顺便跑 AI 整理（会花 API 费，默认关）

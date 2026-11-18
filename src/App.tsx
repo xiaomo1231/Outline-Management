@@ -5,7 +5,7 @@ import * as mem from "./lib/memory";
 import { isTauri } from "./lib/db";
 import * as bk from "./lib/backup";
 import { purgeOld } from "./lib/trash";
-import { MEM_DEFAULT, type EditorPrefs, type MemPrefs } from "./lib/hooks";
+import { MEM_DEFAULT, migrateMemPrefs, type EditorPrefs, type MemPrefs } from "./lib/hooks";
 import { loadSavedFonts } from "./lib/fonts";
 import { fmtTime, today } from "./lib/util";
 import Library from "./pages/Library";
@@ -42,6 +42,9 @@ export default function App() {
     (async () => {
       setBroken(await bk.checkIntegrity());
       purgeOld().catch(() => {});
+      // 核心摘要默认上限从 3000 调到 10000：老设置里的旧默认值跟着升
+      const mp = migrateMemPrefs(await repo.getSetting<Partial<MemPrefs>>("memory", {}));
+      if (mp) await repo.setSetting("memory", mp);
       await loadSavedFonts((await repo.getSetting<Partial<EditorPrefs>>("editor", {})).fonts ?? []);
       const s = useStore.getState();
       await s.loadWorks();

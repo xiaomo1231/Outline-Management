@@ -5,7 +5,7 @@ import { useStore, toast } from "../lib/store";
 import * as mem from "../lib/memory";
 import * as repo from "../lib/repo";
 import { compileStyle } from "../lib/style";
-import { MEM_DEFAULT, useSetting, type MemPrefs } from "../lib/hooks";
+import { MEM_DEFAULT, residentLimitOf, useSetting, type MemPrefs } from "../lib/hooks";
 import { AsyncButton, Empty, Seg } from "../components/ui";
 import { modelRun } from "../lib/ai/nightly";
 import * as arc from "../lib/ai/archive";
@@ -25,7 +25,7 @@ export async function runAll(onStep?: (s: string) => void, force = false) {
   if (!a.ok) return a;
   if (!prefs.autoModel && !force) return a;
   try {
-    return await modelRun(ctx(), prefs.residentLimit, onStep);
+    return await modelRun(ctx(), residentLimitOf(prefs), onStep);
   } catch (e) {
     toast(errText(e));
     return a;
@@ -96,7 +96,7 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
             <li>
               各层条目：{h.counts.map((n, i) => `${mem.LAYER[i + 1]} ${n}`).join("、")}
             </li>
-            <li className={h.residentChars ? "" : "bad"}>核心摘要 {h.residentChars ? `${h.residentChars} 字（上限 ${prefs.residentLimit}）` : "还没生成，AI 会现场拼一份"}</li>
+            <li className={h.residentChars ? "" : "bad"}>核心摘要 {h.residentChars ? `${h.residentChars} 字（上限 ${residentLimitOf(prefs)}）` : "还没生成，AI 会现场拼一份"}</li>
             <li className={h.lastScript?.ok === false ? "bad" : ""}>上次自动整理：{h.lastScript ? `${fmtTime(h.lastScript.at)}，${h.lastScript.ok ? "正常" : "出错"}` : "还没跑过"}</li>
             <li className={h.lastModel?.ok === false ? "bad" : ""}>上次 AI 整理：{h.lastModel ? `${fmtTime(h.lastModel.at)}，${h.lastModel.ok ? "正常" : "出错"}` : "还没跑过"}</li>
             <li className={h.diaryToday ? "" : "bad"}>今日写作日记：{h.diaryToday ? "已生成" : "还没生成"}</li>
@@ -311,10 +311,10 @@ function ResidentTab({ work }: { work: string }) {
   }, [work]);
   return (
     <div className="panel">
-      <h3>核心摘要 · 每次调用 AI 都会带上（{text.length} / {prefs.residentLimit} 字）</h3>
+      <h3>核心摘要 · 每次调用 AI 都会带上（{text.length} / {residentLimitOf(prefs)} 字）</h3>
       <textarea rows={18} value={text} onChange={(e) => setText(e.target.value)} placeholder="还没生成。可以点下面按需生成，或者等今晚的每日整理。" />
       <div className="addrow">
-        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, prefs.residentLimit); toast("已保存"); }}>
+        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, residentLimitOf(prefs)); toast("已保存"); }}>
           保存
         </button>
         <button
@@ -322,7 +322,7 @@ function ResidentTab({ work }: { work: string }) {
           type="button"
           onClick={async () => {
             const s = useStore.getState();
-            const t = mem.buildResident(s.work!, s.chars, s.vols, s.events, compileStyle(s.style), await mem.items(work, 1), prefs.residentLimit);
+            const t = mem.buildResident(s.work!, s.chars, s.vols, s.events, compileStyle(s.style), await mem.items(work, 1), residentLimitOf(prefs));
             setText(t);
             toast("已按当前数据重新拼了一份，记得保存");
           }}
