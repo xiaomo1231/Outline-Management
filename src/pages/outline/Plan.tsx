@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useStore } from "../../lib/store";
 import { allChapters } from "../../lib/outline";
-import { applyPaceFix, bookLen, KIND, newArc, paceCheck, ranges, redistribute, total, TYPES, type PaceIssue } from "../../lib/plan";
+import { applyPaceFix, bookLen, dropPl, KIND, newArc, paceCheck, ranges, redistribute, total, TYPES, type PaceIssue } from "../../lib/plan";
 import { Empty, Issue } from "../../components/ui";
 import type { Say } from "./Outline";
 import type { PhaseKind } from "../../lib/types";
@@ -60,6 +60,7 @@ export function Plan({ say }: { say: Say }) {
   const vols = useStore((s) => s.vols);
   const work = useStore((s) => s.work)!;
   const edit = useStore((s) => s.edit);
+  const editMany = useStore((s) => s.editMany);
   const [na, setNa] = useState({ name: "", type: "explore", total: 20, gap: 2 });
   const [totals, setTotals] = useState<Record<number, number>>({});
   const drag = useRef<{ a: number; p: number; x: number; cw: number; acc: number } | null>(null);
@@ -211,7 +212,7 @@ export function Plan({ say }: { say: Say }) {
                       章
                     </label>
                     <input className={"goal" + (p.ai ? " aid" : "")} value={p.g} placeholder="这一阶段要完成什么（只写目标，不写细节）" aria-label="阶段目标" onChange={(e) => edit("plan", (d) => { d[ai].ph[pi].g = e.target.value; d[ai].ph[pi].ai = false; })} />
-                    <button className="x" type="button" aria-label="删除阶段" onClick={() => a.ph.length > 1 && edit("plan", (d) => void d[ai].ph.splice(pi, 1))}>
+                    <button className="x" type="button" aria-label="删除阶段" onClick={() => a.ph.length > 1 && editMany(["plan", "vols"], (d) => { d.plan[ai].ph.splice(pi, 1); dropPl(d.vols as any, ai, pi); })}>
                       ×
                     </button>
                   </div>
@@ -229,13 +230,20 @@ export function Plan({ say }: { say: Say }) {
                   type="button"
                   onClick={() => {
                     const T = Math.max(3, totals[ai] ?? total(a));
-                    edit("plan", (d) => redistribute(d[ai] as any, T));
-                    say(<p style={{ margin: 0 }}>「{a.name}」改成 {T} 章，按原来的比例重新分配。</p>);
+                    let n = T;
+                    edit("plan", (d) => void (n = redistribute(d[ai] as any, T)));
+                    setTotals({ ...totals, [ai]: n });
+                    say(<p style={{ margin: 0 }}>「{a.name}」改成 {n} 章，按原来的比例重新分配{n > T ? `（每个阶段至少 1 章，${a.ph.length} 个阶段最少 ${n} 章）` : ""}。</p>);
                   }}
                 >
                   按总数重新分配
                 </button>
-                <button className="btn" type="button" onClick={() => confirm(`删除事件段「${a.name}」？`) && edit("plan", (d) => void d.splice(ai, 1))}>
+                <button className="btn" type="button" onClick={() => {
+                    if (!confirm(`删除事件段「${a.name}」？`)) return;
+                    editMany(["plan", "vols"], (d) => { d.plan.splice(ai, 1); dropPl(d.vols as any, ai); });
+                    // 没提交的总章数按段的位置存，后面的段跟着前移
+                    setTotals(Object.fromEntries(Object.entries(totals).filter(([k]) => +k !== ai).map(([k, v]) => [+k > ai ? +k - 1 : +k, v])));
+                  }}>
                   删除事件段
                 </button>
               </div>

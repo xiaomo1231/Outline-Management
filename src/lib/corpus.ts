@@ -9,9 +9,14 @@ const SIMILE = ["仿佛", "好像", "似乎", "如同", "宛如", "像是"];
 
 /** 识别 txt 编码：UTF-8 坏字太多就按 GB18030 读 */
 export function decode(buf: ArrayBuffer): string {
+  // 记事本「Unicode」存的是带 BOM 的 UTF-16
+  const b = new Uint8Array(buf.slice(0, 2));
+  if (b[0] === 0xff && b[1] === 0xfe) return new TextDecoder("utf-16le").decode(buf);
+  if (b[0] === 0xfe && b[1] === 0xff) return new TextDecoder("utf-16be").decode(buf);
   const u = new TextDecoder("utf-8").decode(buf);
   const bad = (u.match(/�/g) || []).length;
-  if (bad < u.length / 1000) return u;
+  // 个别坏字（如文件末尾被截断）仍按 UTF-8 读；GBK 被当成 UTF-8 时坏字会多得多
+  if (bad < u.length / 1000 || (bad <= 3 && bad * 50 < u.length)) return u;
   try {
     return new TextDecoder("gb18030").decode(buf);
   } catch {

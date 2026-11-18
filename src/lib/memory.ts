@@ -17,6 +17,8 @@ export interface MemLogEntry {
   kind: "script" | "model";
   ok: boolean;
   lines: string[];
+  /** 每日整理结的是哪一天的账；关窗、「只跑自动整理」、归档后顺带跑的不算结账，记成空串（老日志没有这一项，按结过账算） */
+  daily?: string;
 }
 
 /* ---------- 投票 ---------- */
@@ -72,7 +74,8 @@ export async function updateItem(id: Id, patch: Partial<Pick<MemItem, "text" | "
 
 /** 越冷的层带越短的版本，原文一直留着 */
 export function shorten(t: string): string {
-  const first = t.split(/[。！？\n]/)[0];
+  // 取第一个不为空的句子：以标点开头时第一句是空串
+  const first = t.split(/[。！？\n]/).find((x) => x.trim()) ?? t.trim();
   return first.length > 40 ? first.slice(0, 40) + "…" : first;
 }
 
@@ -130,8 +133,9 @@ export async function currentNo(work: Id, vols: Volume[]): Promise<number> {
 
 let running = false;
 
-export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry> {
-  if (running) return { at: Date.now(), day: today(), kind: "script", ok: false, lines: ["上一次每日整理还没跑完，这次跳过。"] };
+/** daily：到点的每日整理（或手动「现在整理」）结的是哪一天的账；其他时候顺带跑的不传 */
+export async function scriptRun(work: Work, vols: Volume[], daily = ""): Promise<MemLogEntry> {
+  if (running) return { at: Date.now(), day: today(), kind: "script", ok: false, lines: ["上一次每日整理还没跑完，这次跳过。"], daily: "" };
   running = true;
   const lines: string[] = [];
   try {
@@ -173,6 +177,8 @@ export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry
       const l = layerFor(s, it.kind);
       if (l !== it.layer) moved++;
       await db.exec(`UPDATE memory SET score=?, layer=? WHERE id=?`, [s, l, it.id]);
+      // 老版本以标点开头的条目短版本是空的，顺手补上
+      if (!(it.short || "").trim()) await db.exec(`UPDATE memory SET short=? WHERE id=?`, [shorten(it.text), it.id]);
     }
     // 5. 对账
     const after = (await db.all<{ n: number }>(`SELECT COUNT(*) AS n FROM memory WHERE work_id=?`, [work.id]))[0].n;
@@ -180,11 +186,11 @@ export async function scriptRun(work: Work, vols: Volume[]): Promise<MemLogEntry
     const counts = await layerCounts(work.id);
     lines.push(`命中 ${hits.reduce((a, h) => a + h.n, 0)} 次，新条目 ${news.length} 条，并入 ${added} 条，换层 ${moved} 条。`);
     lines.push(`各层：${counts.map((n, i) => `${LAYER[i + 1]} ${n}`).join("、")}。对账${ok ? "一致" : `不一致（应为 ${before + added}，实为 ${after}）`}。`);
-    const e: MemLogEntry = { at: now, day: today(), kind: "script", ok, lines };
+    const e: MemLogEntry = { at: now, day: today(), kind: "script", ok, lines, daily };
     await appendLog(work.id, e);
     return e;
   } catch (err: any) {
-    const e: MemLogEntry = { at: Date.now(), day: today(), kind: "script", ok: false, lines: [...lines, "出错：" + (err?.message || err)] };
+    const e: MemLogEntry = { at: Date.now(), day: today(), kind: "script", ok: false, lines: [...lines, "出错：" + (err?.message || err)], daily };
     await appendLog(work.id, e);
     return e;
   } finally {
@@ -252,12 +258,16 @@ export async function saveResident(work: Id, text: string, limit: number) {
 export interface Bible {
   text: string;
   at: number;
+  /** AI 整理提炼到哪个时间点的归档；作者手动保存不动它（老数据没有，用 at） */
+  upto?: number;
 }
 export async function getBible(work: Id): Promise<Bible> {
   return repo.loadDoc<Bible>(work, "bible", { text: "", at: 0 });
 }
-export async function saveBible(work: Id, text: string) {
-  await repo.saveDoc(work, "bible", { text, at: Date.now() } satisfies Bible);
+/** upto 只有 AI 整理提炼后才传；作者手动保存时沿用原来的 */
+export async function saveBible(work: Id, text: string, upto?: number) {
+  const old = await getBible(work);
+  await repo.saveDoc(work, "bible", { text, at: Date.now(), upto: upto ?? old.upto ?? old.at } satisfies Bible);
 }
 
 /* ---------- 健康栏 ---------- */
@@ -270,19 +280,50 @@ export interface Health {
   diaryToday: boolean;
   bibleDays: number | null;
   pending: { new: number; hit: number };
-  /** 今天该每日整理但还没结 */
+  /** 到点了（或漏跑了）还没结账，而且上次结账后写过东西或有待整理票 */
   overdue: boolean;
+  /** 现在该结哪一天的账：漏跑时是漏掉的那天，否则是今天 */
+  owe: string;
+}
+
+/** 最近一次结账：关窗等顺带跑的自动整理不算 */
+export function lastDaily(log: MemLogEntry[]): MemLogEntry | undefined {
+  return log.find((e) => e.kind === "script" && e.daily !== "");
+}
+
+/** 最近一个已经过了的整理时刻。dailyAt 形如 "22:05"，读不出来按 22:05 */
+export function lastDue(dailyAt: string, now = Date.now()): Date {
+  // 不能用 || 给默认值：0 点、整点的 0 会被当成没填
+  const t = /^(\d{1,2}):(\d{1,2})/.exec(dailyAt || "");
+  const due = new Date(now);
+  due.setHours(t ? +t[1] : 22, t ? +t[2] : 5, 0, 0);
+  if (due.getTime() > now) due.setDate(due.getDate() - 1);
+  return due;
+}
+
+/**
+ * 该不该结账。last：最近一次结账；edited：正文最后保存时间；votes：待整理票数。
+ * 从没结过账时：今天到点了，或者上一个整理时刻之前就写过东西（漏跑）才算欠账，不在新书第一天早上补“昨天”。
+ */
+export function owing(dailyAt: string, last: MemLogEntry | undefined, edited: number, votes: number, now = Date.now()): { overdue: boolean; owe: string } {
+  const due = lastDue(dailyAt, now);
+  const owed = last ? last.at < due.getTime() : today(due) === today(new Date(now)) || (edited > 0 && edited < due.getTime());
+  const active = votes > 0 || edited > (last?.at ?? 0);
+  return { overdue: owed && active, owe: owed ? today(due) : today(new Date(now)) };
+}
+
+async function lastEdited(work: Id): Promise<number> {
+  const db = await getDb();
+  const r = await db.all<{ t: number | null }>(`SELECT MAX(updated) AS t FROM chapter_text WHERE work_id=?`, [work]);
+  return r[0]?.t ?? 0;
 }
 
 export async function health(work: Id, dailyAt: string): Promise<Health> {
-  const [counts, res, log, diary, bible, pending] = await Promise.all([layerCounts(work), getResident(work), getLog(work), repo.getDiary(work, today()), getBible(work), pendingVotes(work)]);
+  const [counts, res, log, diary, bible, pending, edited] = await Promise.all([layerCounts(work), getResident(work), getLog(work), repo.getDiary(work, today()), getBible(work), pendingVotes(work), lastEdited(work)]);
   const lastScript = log.find((e) => e.kind === "script");
   const lastModel = log.find((e) => e.kind === "model");
-  const [h, m] = dailyAt.split(":").map(Number);
-  const due = new Date();
-  due.setHours(h || 22, m || 5, 0, 0);
-  const lastDay = lastScript?.day;
-  const overdue = (!!lastDay && lastDay < today() && pending.new + pending.hit > 0) || (Date.now() > due.getTime() && lastDay !== today() && pending.new + pending.hit > 0);
+  // 「今天跑过」只认结账那次；没有待整理票时，写过东西也要结账（备份、日记、补归档）
+  const { overdue, owe } = owing(dailyAt, lastDaily(log), edited, pending.new + pending.hit);
   return {
     counts,
     residentChars: res?.text.length ?? 0,
@@ -292,5 +333,6 @@ export async function health(work: Id, dailyAt: string): Promise<Health> {
     bibleDays: bible.at ? Math.floor((Date.now() - bible.at) / 86400000) : null,
     pending,
     overdue,
+    owe,
   };
 }

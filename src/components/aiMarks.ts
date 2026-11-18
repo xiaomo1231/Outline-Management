@@ -3,6 +3,8 @@
 import { Mark, Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
+import { isHistoryTransaction } from "@tiptap/pm/history";
+import { countWords } from "../lib/util";
 
 export const AiText = Mark.create({
   name: "aitext",
@@ -27,7 +29,8 @@ export const AiTracker = Extension.create({
       new Plugin({
         key: new PluginKey("aiTracker"),
         appendTransaction(trs, _old, state) {
-          const user = trs.filter((t) => t.docChanged && !t.getMeta(AI_META));
+          // 撤销、重做恢复的是原来的内容和标记，不算作者改字
+          const user = trs.filter((t) => t.docChanged && !t.getMeta(AI_META) && !isHistoryTransaction(t));
           if (!user.length) return null;
           const ai = state.schema.marks.aitext;
           const ed = state.schema.marks.aiedit;
@@ -35,7 +38,13 @@ export const AiTracker = Extension.create({
           for (const t of user)
             t.steps.forEach((step, i) => {
               const after = t.mapping.slice(i + 1);
-              step.getMap().forEach((_a, _b, from, to) => ranges.push([after.map(from, -1), after.map(to, 1)]));
+              const was = t.docs[i];
+              const now = t.docs[i + 1] ?? t.doc;
+              step.getMap().forEach((a, b, from, to) => {
+                // 只拆段、并段（回车、段首退格）没有增删文字，不算改了 AI 的字
+                if (!was.textBetween(a, b) && !now.textBetween(from, to)) return;
+                ranges.push([after.map(from, -1), after.map(to, 1)]);
+              });
             });
           const tr = state.tr;
           let changed = false;
@@ -70,13 +79,13 @@ export const AiTracker = Extension.create({
   },
 });
 
-/** 统计 AI 字数：[AI 原样, AI 改过] */
+/** 统计 AI 字数：[AI 原样, AI 改过]。和本章字数同一口径（countWords），占比才不会超过 100% */
 export function aiChars(doc: PMNode): [number, number] {
   let a = 0;
   let e = 0;
   doc.descendants((n) => {
     if (!n.isText) return;
-    const len = (n.text || "").replace(/\s/g, "").length;
+    const len = countWords(n.text || "");
     if (n.marks.some((m) => m.type.name === "aitext")) a += len;
     else if (n.marks.some((m) => m.type.name === "aiedit")) e += len;
   });

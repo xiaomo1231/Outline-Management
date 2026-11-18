@@ -172,6 +172,21 @@ export default function Assistant() {
   }, [page]);
   const listRef = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null);
+  // 等回复期间被删掉的对话，回复到了也不再存回去
+  const deleted = useRef(new Set<string>());
+  // 作者在正文里最后选中的文字。点进助手后正文选区就丢了，所以平时记下来；助手自己输入框里的选择不算
+  const docSel = useRef("");
+  useEffect(() => {
+    const h = () => {
+      const s = window.getSelection();
+      const n = s?.anchorNode;
+      const el = n instanceof Element ? n : n?.parentElement;
+      if (document.activeElement?.closest(".assist") || el?.closest(".assist")) return;
+      docSel.current = s?.toString() ?? "";
+    };
+    document.addEventListener("selectionchange", h);
+    return () => document.removeEventListener("selectionchange", h);
+  }, []);
 
   useEffect(() => {
     repo.listChats(work.id).then((cs) => {
@@ -198,13 +213,14 @@ export default function Assistant() {
   const chatObj = chats.find((c) => c.id === cur);
 
   async function persist(c: Chat) {
+    if (deleted.current.has(c.id)) return;
     setChats((cs) => [c, ...cs.filter((x) => x.id !== c.id)]);
     await repo.saveChat(work.id, c);
   }
 
   async function build(q: string) {
     const c = ctx();
-    const sel = window.getSelection()?.toString() ?? "";
+    const sel = docSel.current;
     const loc = await locationAndRecall(c, q, page, chapterId, sel);
     const modeText = MODES.find((m) => m[0] === mode)?.[1];
     const system = (await stablePrefix(c, "你是这本小说作者的写作搭子，读得到整本书的资料。作者是主导，你给思路和信息，不替作者做决定。回答简洁、具体、说人话，不用套话。需要更多资料时调用工具去查，不要编造书里没有的内容。")) + "\n\n=== 当前位置和相关资料 ===\n" + loc.text + (modeText ? "\n\n本次的用法：" + mode + "。" + modeText : "");
@@ -275,11 +291,13 @@ export default function Assistant() {
     const many = splitChapterOutline(content);
     if (many.length >= 2) {
       const vol = s.vols[r.v];
-      if (!confirm(`识别出 ${many.length} 章大纲：\n${many.map((x) => "· " + x.t).join("\n")}\n\n加到「${vol.title}」末尾，作为新章（章名和本章大纲）？`)) return;
-      s.aiEdit(`AI 助手：存为 ${many.length} 章大纲`, ["vols"], (d) => {
-        for (const x of many) d.vols[r.v].chapters.push({ ...newChapter(x.t), ol: x.ol });
-      });
-      return toast(`已加 ${many.length} 章，到「大纲」页查看`);
+      // 取消就当成普通回答，往下按单个场景存
+      if (confirm(`识别出 ${many.length} 章大纲：\n${many.map((x) => "· " + x.t).join("\n")}\n\n加到「${vol.title}」末尾，作为新章（章名和本章大纲）？\n\n点「取消」则按单个场景保存。`)) {
+        s.aiEdit(`AI 助手：存为 ${many.length} 章大纲`, ["vols"], (d) => {
+          for (const x of many) d.vols[r.v].chapters.push({ ...newChapter(x.t), ol: x.ol });
+        });
+        return toast(`已加 ${many.length} 章，到「大纲」页查看`);
+      }
     }
     const title = clip(firstLine(content), 18) || "新场景";
     if (!confirm(`在第${r.no}章末尾新建场景「${title}」，把这段回答放进“目标”？`)) return;
@@ -325,6 +343,7 @@ export default function Assistant() {
             title="删除这个对话"
             onClick={async () => {
               if (!confirm("删除这个对话？")) return;
+              deleted.current.add(chatObj.id);
               await repo.deleteChat(chatObj.id);
               setChats(chats.filter((c) => c.id !== chatObj.id));
               setCur(null);

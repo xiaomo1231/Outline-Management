@@ -20,12 +20,14 @@ export async function runAll(onStep?: (s: string) => void, force = false) {
   const s = useStore.getState();
   if (!s.work) return;
   const prefs = { ...MEM_DEFAULT, ...(await repo.getSetting<Partial<MemPrefs>>("memory", {})) };
+  // 结哪一天的账：漏跑后补跑时是漏掉的那天，日记也写到那天
+  const day = (await mem.health(s.work.id, prefs.dailyAt)).owe;
   onStep?.("自动整理：备份、结算、升降层");
-  const a = await mem.scriptRun(s.work, s.vols);
+  const a = await mem.scriptRun(s.work, s.vols, day);
   if (!a.ok) return a;
   if (!prefs.autoModel && !force) return a;
   try {
-    return await modelRun(ctx(), residentLimitOf(prefs), onStep);
+    return await modelRun(ctx(), residentLimitOf(prefs), onStep, day);
   } catch (e) {
     toast(errText(e));
     return a;
@@ -112,10 +114,10 @@ function HealthTab({ work, refresh }: { work: string; refresh: () => void }) {
           <AsyncButton
             primary
             onClick={async () => {
-              await runAll(setStep, true);
+              const r = await runAll(setStep, true);
               setStep("");
               refresh();
-              toast("整理完成");
+              toast(!r || r.ok ? "整理完成" : "整理出错：" + r.lines[r.lines.length - 1].replace(/^出错：/, ""));
             }}
           >
             现在整理（自动整理 + AI 整理）
@@ -265,7 +267,7 @@ function ItemsTab({ work }: { work: string }) {
               .filter((x) => x.layer === l)
               .map((x) => (
                 <div key={x.id} className="mem-i">
-                  <div>{l >= 3 ? x.short : x.text}</div>
+                  <div>{l >= 3 ? x.short || mem.shorten(x.text) : x.text}</div>
                   <small>
                     第{x.ch}章 · {x.kind === "decision" ? "决定" : x.kind === "rejected" ? "否掉的思路" : x.kind === "inspire" ? "灵感" : "事实"} · 命中 {x.hits} · 分 {x.score}
                   </small>
@@ -299,22 +301,44 @@ function ItemsTab({ work }: { work: string }) {
   );
 }
 
+/** 改了没点保存就离开（切分区、切页面）时自动保存，不让输入静默丢掉 */
+function useSaveOnLeave(text: string, save: (t: string) => Promise<void>, what: string) {
+  const saved = useRef<string | null>(null);
+  const cur = useRef(text);
+  const fn = useRef(save);
+  cur.current = text;
+  fn.current = save;
+  useEffect(
+    () => () => {
+      if (saved.current !== null && cur.current !== saved.current) fn.current(cur.current).then(() => toast(`${what}的修改已自动保存`));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  /** 读到或保存了的内容 */
+  return (t: string) => void (saved.current = t);
+}
+
 function ResidentTab({ work }: { work: string }) {
   const [prefs] = useSetting<MemPrefs>("memory", MEM_DEFAULT);
   const [text, setText] = useState("");
   const [at, setAt] = useState(0);
+  const limit = residentLimitOf(prefs);
+  const mark = useSaveOnLeave(text, (t) => mem.saveResident(work, t, limit), "核心摘要");
   useEffect(() => {
     mem.getResident(work).then((r) => {
       setText(r?.text ?? "");
       setAt(r?.at ?? 0);
+      mark(r?.text ?? "");
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [work]);
   return (
     <div className="panel">
       <h3>核心摘要 · 每次调用 AI 都会带上（{text.length} / {residentLimitOf(prefs)} 字）</h3>
       <textarea rows={18} value={text} onChange={(e) => setText(e.target.value)} placeholder="还没生成。可以点下面按需生成，或者等今晚的每日整理。" />
       <div className="addrow">
-        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, residentLimitOf(prefs)); toast("已保存"); }}>
+        <button className="btn primary" type="button" onClick={async () => { await mem.saveResident(work, text, residentLimitOf(prefs)); mark(text); toast("已保存"); }}>
           保存
         </button>
         <button
@@ -337,15 +361,20 @@ function ResidentTab({ work }: { work: string }) {
 
 function BibleTab({ work }: { work: string }) {
   const [text, setText] = useState("");
+  const mark = useSaveOnLeave(text, (t) => mem.saveBible(work, t), "设定集");
   useEffect(() => {
-    mem.getBible(work).then((b) => setText(b.text));
+    mem.getBible(work).then((b) => {
+      setText(b.text);
+      mark(b.text);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [work]);
   return (
     <div className="panel">
       <h3>设定集 · 这本书已经定下、不能推翻的东西</h3>
       <textarea rows={20} value={text} onChange={(e) => setText(e.target.value)} placeholder="世界规则、人物定论、重要物件、地点、时间线定点。AI 整理会从新写的章节里提炼进来，你也可以直接写。" />
       <div className="addrow">
-        <button className="btn primary" type="button" onClick={async () => { await mem.saveBible(work, text); toast("已保存"); }}>
+        <button className="btn primary" type="button" onClick={async () => { await mem.saveBible(work, text); mark(text); toast("已保存"); }}>
           保存
         </button>
       </div>

@@ -70,7 +70,8 @@ function splitWho(w: string, names: string[]): string[] {
   return (w || "")
     .split(/[、,，\s]+/)
     .filter(Boolean)
-    .map((n) => names.find((k) => k === n || k.includes(n)) || n);
+    // 先认同名的，没有再按包含找：免得「李四」被排在前面的「李四娘」抢走
+    .map((n) => names.find((k) => k === n) || names.find((k) => k.includes(n)) || n);
 }
 
 /**
@@ -106,7 +107,58 @@ export function targetChapter(vols: Volume[], e: StoryEvent): { r: ChRef; why: s
   if (x) return { r: x, why: "按事件表里填的章节" };
   let best: ChRef | null = null;
   for (const y of all) if (y.ch.scenes.some((s) => s.day != null && s.day <= e.day)) best = y;
-  return { r: best || all[all.length - 1], why: "没填章节，按故事时间推断" };
+  // 比所有已填时间的场景都早：按推断的天数（第 N 章 ≈ 第 N 天）找，再早就放第一章
+  if (!best) for (const y of all) if (dayGuess(vols, y).day <= e.day) best = y;
+  return { r: best || all[0], why: "没填章节，按故事时间推断" };
+}
+
+/**
+ * 拖动章（vols 是可修改的草稿）。toCh 是放下处的章：同卷往下拖放在它后面，其余放在它前面；
+ * toCh 为空表示放到第 toV 卷末尾（可以是空卷）。有篇幅规划时按新位置更新所属阶段。
+ */
+export function moveChapter(vols: Volume[], plan: Arc[], id: string, toCh: string | null, toV?: number): boolean {
+  const all = allChapters(vols);
+  const from = all.find((r) => r.ch.id === id);
+  if (!from) return false;
+  let item: Chapter;
+  if (toCh) {
+    const to = all.find((r) => r.ch.id === toCh);
+    if (!to || to.ch.id === id) return false;
+    const down = from.v === to.v && from.c < to.c;
+    [item] = vols[from.v].chapters.splice(from.c, 1);
+    const tc = vols[to.v].chapters.findIndex((c) => c.id === toCh);
+    vols[to.v].chapters.splice(tc + (down ? 1 : 0), 0, item);
+  } else {
+    if (toV == null || !vols[toV]) return false;
+    if (from.v === toV && from.c === vols[toV].chapters.length - 1) return false;
+    [item] = vols[from.v].chapters.splice(from.c, 1);
+    vols[toV].chapters.push(item);
+  }
+  if (plan.length && item.pl) {
+    const no = allChapters(vols).find((r) => r.ch.id === item.id)?.no;
+    const w = no ? where(plan, no) : null;
+    if (w) item.pl = w;
+  }
+  return true;
+}
+
+/**
+ * 拖动场景：把 fromCh 的第 si 个场景放到 toCh 的第 ti 个位置（按拖动前的序号，同章往下拖落在目标后面）；
+ * ti 为空表示放到末尾。换了章时，关联的事件也记到新章。
+ */
+export function moveScene(vols: Volume[], events: StoryEvent[], fromCh: string, si: number, toCh: string, ti: number | null): boolean {
+  const all = allChapters(vols);
+  const from = all.find((r) => r.ch.id === fromCh);
+  const to = all.find((r) => r.ch.id === toCh);
+  if (!from || !to || !from.ch.scenes[si] || (fromCh === toCh && ti === si)) return false;
+  const [s] = vols[from.v].chapters[from.c].scenes.splice(si, 1);
+  const arr = vols[to.v].chapters[to.c].scenes;
+  arr.splice(Math.min(ti ?? arr.length, arr.length), 0, s);
+  if (s.ev && fromCh !== toCh) {
+    const e = events.find((x) => x.id === s.ev);
+    if (e) e.ch = toCh;
+  }
+  return true;
 }
 
 /** 事件 → 大纲：在目标章里新建场景并关联。vols 和 e 都是可修改的草稿。 */
@@ -177,6 +229,8 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
   const all = allChapters(d.vols);
   for (const e of d.events) {
     if (e.sc) continue;
+    // 同步时整章记的事件本来就代表那一章，章还在就不再变回场景
+    if (e.from === "大纲（整章）" && e.ch && all.some((r) => r.ch.id === e.ch)) continue;
     const t = targetChapter(d.vols, e);
     if (!t) continue;
     const id = e.id;
@@ -261,11 +315,17 @@ export interface Plant {
 }
 export function plants(vols: Volume[], events: StoryEvent[]): Plant[] {
   const m = new Map<string, Plant>();
-  const get = (n: string) => { if (!m.has(n)) m.set(n, { name: n, plantNo: null, payNo: null }); return m.get(n)!; };
+  // 埋和收都去掉全角括号里的补充说明再对，显示用第一次出现时的写法
+  const get = (raw: string) => {
+    const n = raw.trim();
+    const k = n.replace(/（.*?）/g, "").trim() || n;
+    if (!m.has(k)) m.set(k, { name: n, plantNo: null, payNo: null });
+    return m.get(k)!;
+  };
   for (const r of allChapters(vols))
     for (const s of r.ch.scenes) {
-      if (s.plant) { const p = get(s.plant.trim()); p.plantNo = p.plantNo ?? r.no; }
-      if (s.pay) { const p = get(s.pay.replace(/（.*?）/g, "").trim()); p.payNo = r.no; }
+      if (s.plant?.trim()) { const p = get(s.plant); p.plantNo = p.plantNo ?? r.no; }
+      if (s.pay?.trim()) { const p = get(s.pay); p.payNo = r.no; }
     }
   for (const e of events) {
     const n = (e.fore || "").replace(/^(埋|收)[:：]/, "").trim();
@@ -343,7 +403,7 @@ export function parseQuickChapters(text: string): { t: string; ol: string; hook:
     .filter(Boolean)
     .map((l) => {
       const [t = "", ol = "", hook = ""] = l.split(/\s*[｜|]\s*/);
-      return { t: t.replace(/^第[0-9一二三四五六七八九十百千]+章[\s：:、.]*/, "").trim(), ol: ol.trim(), hook: hook.trim() };
+      return { t: t.replace(/^第[0-9零〇一二两三四五六七八九十百千]+章[\s：:、.]*/, "").trim(), ol: ol.trim(), hook: hook.trim() };
     });
 }
 
@@ -351,7 +411,8 @@ export function parseQuickChapters(text: string): { t: string; ol: string; hook:
 export function firstLine(text: string): string {
   const lines = text
     .split(/\r?\n/)
-    .map((l) => l.replace(/^[\s#>*\-•\d.、]+/, "").replace(/[*_`]/g, "").trim())
+    // 只去掉列表序号「1.」「2、」，不吃掉「1937年」这种开头的数字
+    .map((l) => l.replace(/^[\s#>*\-•]+/, "").replace(/^\d+[.、)](?!\d)\s*/, "").replace(/[*_`]/g, "").trim())
     .filter(Boolean);
   const good = lines.find((l) => !/^(好的|当然|以下|下面|这是|没问题)/.test(l) && !/[:：]$/.test(l));
   return good ?? lines[0] ?? "";
@@ -363,7 +424,7 @@ export function splitChapterOutline(text: string): { t: string; ol: string }[] {
   for (const raw of text.split(/\r?\n/)) {
     const l = raw.replace(/^[\s#>*\-•]+/, "").replace(/[*_`]/g, "").trim();
     if (!l) continue;
-    const m = /^第\s*([0-9一二三四五六七八九十百]+)\s*章[\s：:、.，,—\-]*(.*)$/.exec(l);
+    const m = /^第\s*([0-9零〇一二两三四五六七八九十百千]+)\s*章[\s：:、.，,—\-]*(.*)$/.exec(l);
     if (m) {
       const rest = m[2].trim();
       const [t, ...more] = rest.split(/[：:｜|—]\s*/);

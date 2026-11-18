@@ -87,7 +87,7 @@ export function Events({ mode, sel, setSel, goScene }: { mode: "simple" | "detai
   const vols = useStore((s) => s.vols);
   const plan = useStore((s) => s.plan);
   const edit = useStore((s) => s.edit);
-  const [day, setDay] = useState(1);
+  const [day, setDay] = useState("1");
   const [text, setText] = useState("");
   const [ty, setTy] = useState<EventType>("main");
   const [lanes, setLanes] = useState(false);
@@ -241,7 +241,7 @@ export function Events({ mode, sel, setSel, goScene }: { mode: "simple" | "detai
         </div>
         {!events.length && <Empty>还没有事件。在下面添加，或从正文提取，也可以用「同步」把大纲里的场景导进来。</Empty>}
         <div className="addrow">
-          <input type="number" value={day} aria-label="第几天" title="第几天；0 和负数是开篇之前" style={{ maxWidth: 70 }} onChange={(e) => setDay(+e.target.value)} />
+          <input type="number" value={day} aria-label="第几天" title="第几天；0 和负数是开篇之前" style={{ maxWidth: 70 }} onChange={(e) => setDay(e.target.value)} />
           <input value={text} placeholder="新事件，例如：主角第一次没去上班" onChange={(e) => setText(e.target.value)} />
           <select className="btn" value={ty} aria-label="类型" onChange={(e) => setTy(e.target.value as EventType)}>
             {(Object.keys(TYN) as EventType[]).map((k) => (
@@ -255,8 +255,11 @@ export function Events({ mode, sel, setSel, goScene }: { mode: "simple" | "detai
             type="button"
             onClick={() => {
               if (!text.trim()) return;
+              // 和事件卡一样，没填天数按第 1 天；时间轴按整天排，小数不收
+              const n = day.trim() === "" ? 1 : +day;
+              if (!Number.isInteger(n)) return toast("天数填整数，比如 3；0 和负数是开篇之前");
               const id = uid("e");
-              edit("events", (d) => void d.push({ id, day: Number.isFinite(day) ? day : 1, ch: null, t: text.trim(), who: "", ty }));
+              edit("events", (d) => void d.push({ id, day: n, ch: null, t: text.trim(), who: "", ty }));
               setText("");
               setSel(id);
             }}

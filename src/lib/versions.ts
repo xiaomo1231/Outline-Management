@@ -23,20 +23,28 @@ export function needSnapshot(last: SnapMeta | null, now: number, cur: { words: n
   return Math.abs(cur.words - last.words) >= SNAP_WORDS;
 }
 
-/** 一章原来不少于 500 字，这次少了一半以上（含变空），就算字数骤降 */
+/** 少于这么多字的删改不算骤降（删一两句不用每次都留快照、弹提示） */
+export const SHRINK_MIN = 50;
+/** 这次少了一半以上（含变空、全选覆盖），且少了不止 50 字，就算字数骤降。短章也算，否则没有快照可找回 */
 export function isShrink(oldWords: number, newWords: number): boolean {
-  return oldWords >= 500 && newWords < oldWords * 0.5;
+  return oldWords - newWords >= SHRINK_MIN && newWords < oldWords * 0.5;
 }
 
 /**
  * 保留规则：24 小时内全留；7 天内每小时留最新一份；30 天内每天一份；更早的每周一份。
+ * 从备份取回的版本是作者特意放进来对比的，用的又是备份时的旧时间，不参与分桶，一直保留。
  * 返回要保留的 id。
  */
-export function keepVersions(list: { id: string; at: number }[], now: number): Set<string> {
+export const PULLED_REASON = "从备份取回";
+export function keepVersions(list: { id: string; at: number; reason?: string | null }[], now: number): Set<string> {
   const keep = new Set<string>();
   const seen = new Set<string>();
   const sorted = [...list].sort((a, b) => b.at - a.at);
   for (const v of sorted) {
+    if (v.reason === PULLED_REASON) {
+      keep.add(v.id);
+      continue;
+    }
     const age = now - v.at;
     let bucket: string;
     if (age < DAY) {

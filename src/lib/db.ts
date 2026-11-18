@@ -65,7 +65,7 @@ function idb(): Promise<IDBDatabase> {
     r.onerror = () => rej(r.error);
   });
 }
-async function idbGet(key: string): Promise<Uint8Array | undefined> {
+export async function idbGet(key: string): Promise<Uint8Array | undefined> {
   const d = await idb();
   return new Promise((res, rej) => {
     const q = d.transaction("files").objectStore("files").get(key);
@@ -73,7 +73,7 @@ async function idbGet(key: string): Promise<Uint8Array | undefined> {
     q.onerror = () => rej(q.error);
   });
 }
-async function idbPut(key: string, v: Uint8Array) {
+export async function idbPut(key: string, v: Uint8Array) {
   const d = await idb();
   await new Promise<void>((res, rej) => {
     const t = d.transaction("files", "readwrite");

@@ -159,7 +159,7 @@ function useAutoBackup() {
   }, []);
 }
 
-/** 每天定时做每日整理；打开时发现漏跑就补；关窗口时跑一次自动整理 */
+/** 每天定时做每日整理；打开时发现漏跑就补；关窗口时跑一次自动整理并备份 */
 function useScheduler(workId: string | null) {
   const running = useRef(false);
   useEffect(() => {
@@ -177,7 +177,7 @@ function useScheduler(workId: string | null) {
     const check = async () => {
       const p = await prefs();
       const h = await mem.health(workId, p.dailyAt);
-      if (h.overdue) run(h.lastScript && h.lastScript.day < today() ? "补跑昨天漏掉的整理" : "到点了");
+      if (h.overdue) run(h.owe < today() ? "补跑漏掉的整理" : "到点了");
     };
     const t0 = setTimeout(check, 8000);
     const t = setInterval(check, 60_000);
@@ -203,13 +203,27 @@ function useScheduler(workId: string | null) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
       un = await win.onCloseRequested(async (e) => {
-        if (closing) return;
+        // 收尾期间再点「×」也要拦住：不调用 preventDefault，Tauri 会立刻销毁窗口，打断备份和整理
         e.preventDefault();
+        if (closing) return;
         closing = true;
         const s = useStore.getState();
-        try {
+        const t0 = Date.now();
+        const finish = async () => {
+          // 正在整库恢复、或刚恢复完等重新加载：界面手里是恢复前的旧数据，不能再存盘、整理，等恢复跑完直接关
+          // （20 秒没跑完就关窗也不怕：恢复在一个事务里，没提交的部分下次打开会被退回）
+          const r = bk.restoring();
+          if (r) return void (await r.catch(() => {}));
           await s.flushSaves();
-          if (s.work) await Promise.race([mem.scriptRun(s.work, s.vols), new Promise((r) => setTimeout(r, 5000))]);
+          if (s.work) await mem.scriptRun(s.work, s.vols);
+          // 没打开书、或整理正在跑被跳过时，scriptRun 不会备份，这里补一份
+          if ((await repo.getSetting<number>("lastBackup", 0)) < t0) await bk.backup();
+        };
+        try {
+          // 正常等收尾跑完；万一卡住，最多等 20 秒也要能关掉
+          await Promise.race([finish(), new Promise((r) => setTimeout(r, 20_000))]);
+        } catch {
+          /* 收尾出错也照样关窗 */
         } finally {
           await win.destroy();
         }

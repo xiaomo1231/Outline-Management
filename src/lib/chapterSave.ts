@@ -1,6 +1,6 @@
 // 正文保存：写库、骤降拦截、自动快照、失败时留本机草稿并重试。
 import * as repo from "./repo";
-import { trackSave, toast } from "./store";
+import { clearSaveErr, registerFlush, trackSave, toast } from "./store";
 import { isShrink, needSnapshot } from "./versions";
 
 export interface Snap {
@@ -18,6 +18,13 @@ export interface SaveResult {
 
 const DRAFT = "moshu-draft:";
 const seq = new Map<string, number>();
+/** 每章最近一次存成功的是第几次保存 */
+const okSeq = new Map<string, number>();
+/** 存失败、还在等自动重试的正文：点「保存失败，点此重试」、关窗、切书时马上再试 */
+const failed = new Map<string, () => Promise<unknown>>();
+registerFlush(async () => {
+  for (const f of [...failed.values()]) await f().catch(() => {});
+});
 
 function ls(): Storage | null {
   try {
@@ -65,7 +72,7 @@ export async function persistChapter(work: string, ch: string, snap: Snap): Prom
   const my = (seq.get(ch) ?? 0) + 1;
   seq.set(ch, my);
   try {
-    return await trackSave(async () => {
+    const r = await trackSave(async () => {
       const old = await repo.loadText(ch);
       let shrunk: number | undefined;
       if (old && isShrink(old.words, snap.words)) {
@@ -77,9 +84,18 @@ export async function persistChapter(work: string, ch: string, snap: Snap): Prom
       if (needSnapshot(last, Date.now(), snap)) await repo.addVersion(work, ch, snap.html, snap.plain, snap.words, "自动");
       clearDraft(ch);
       return { delta, shrunk };
-    });
+    }, "ch:" + ch);
+    okSeq.set(ch, Math.max(my, okSeq.get(ch) ?? 0));
+    if (seq.get(ch) === my) failed.delete(ch);
+    return r;
   } catch (e) {
+    // 更新的内容已经存进去了：这份旧的失败不用管，也不能留成草稿
+    if ((okSeq.get(ch) ?? 0) > my) {
+      clearSaveErr("ch:" + ch);
+      throw e;
+    }
     writeDraft(ch, snap);
+    if (seq.get(ch) === my) failed.set(ch, () => persistChapter(work, ch, snap));
     setTimeout(() => {
       // 期间有更新的保存就不用重试这一份了
       if (seq.get(ch) === my) persistChapter(work, ch, snap).catch(() => {});

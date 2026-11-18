@@ -24,7 +24,8 @@ import { EDITOR_DEFAULT, useSetting, type EditorPrefs } from "../lib/hooks";
 import { importFont, loadSavedFonts, SYSTEM_FONTS } from "../lib/fonts";
 import { ruleCheck } from "../lib/chars";
 import { Issue, AsyncButton, Empty, Seg } from "../components/ui";
-import { countIn, findInDoc, replaceInHtml, snippets } from "../lib/findReplace";
+import { countIn, findInDoc, replaceInHtml, snippets, type Hit } from "../lib/findReplace";
+import { isTauri } from "../lib/db";
 import { ExportPanel } from "./DataPanels";
 import * as T from "../lib/ai/tasks";
 import { errText } from "../lib/ai/client";
@@ -120,7 +121,12 @@ export default function Write() {
   const [ai, setAi] = useState<[number, number]>([0, 0]);
   const [panel, setPanel] = useState<Panel>({ kind: "none" });
   const abort = useRef<AbortController | null>(null);
+  /** 编辑器里正在显示的是哪一章（切章读取期间仍是上一章，打的字存回上一章） */
   const loadedFor = useRef<string | null>(null);
+  /** 每次切章加一，读取回来时对不上就是过时的结果，直接丢掉 */
+  const loadSeq = useRef(0);
+  /** 有改动在排队等保存（状态栏不能显示「已保存」） */
+  const [dirty, setDirty] = useState(false);
 
   const chs = useMemo(() => allChapters(vols), [vols]);
   const [fold, setFold] = useSetting<Record<string, number>>("tocFold", {});
@@ -138,14 +144,26 @@ export default function Write() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefsReady]);
 
-  // 全书字数
-  useEffect(() => {
-    repo.allTexts(work.id).then((ts) => setWords(Object.fromEntries(ts.map((t) => [t.id, t.words]))));
+  /** 「今日」字数属于哪一天：过了午夜要从库里重读，不能接着昨天的累加 */
+  const day = useRef("");
+  const loadToday = () => {
+    const d0 = (day.current = today());
     repo.dailyWords(work.id, 1).then((d) => {
-      const t = d.find((x) => x.day === today());
+      const t = d.find((x) => x.day === d0);
       setTodayWords(t?.words ?? 0);
       setTodayExtra({ pasted: t?.pasted ?? 0, ai: t?.ai ?? 0 });
     });
+  };
+  /** 正文写库后把字数变化记到「今日」 */
+  const addToday = (delta: number) => {
+    if (today() !== day.current) loadToday();
+    else if (delta) setTodayWords((x) => x + delta);
+  };
+
+  // 全书字数
+  useEffect(() => {
+    repo.allTexts(work.id).then((ts) => setWords(Object.fromEntries(ts.map((t) => [t.id, t.words]))));
+    loadToday();
   }, [work.id]);
 
   // 写作限制：本章在哪一卷、有哪些人物、谁的视角，用来认对白归属和筛选限制
@@ -159,16 +177,20 @@ export default function Write() {
   const extra = (kind: "pasted" | "ai", n: number) => {
     if (!n) return;
     setTodayExtra((x) => ({ ...x, [kind]: x[kind] + n }));
-    repo.addDailyExtra(work.id, kind, n).catch(() => {});
+    repo
+      .addDailyExtra(work.id, kind, n)
+      .then(() => today() !== day.current && loadToday())
+      .catch(() => {});
   };
 
   /** 立刻存一份（编辑器内容先同步取出，之后切章也不会串） */
   const saveNow = async (id: string, snap: Snap) => {
+    if (!save.pending()) setDirty(false);
     try {
       const r = await persistChapter(work.id, id, snap);
       arc.noteEdit(id);
       setWords((m) => ({ ...m, [id]: snap.words }));
-      if (r.delta) setTodayWords((x) => x + r.delta);
+      addToday(r.delta);
       if (r.shrunk) shrinkToast(r.shrunk);
     } catch {
       /* 已经留了本机草稿，状态栏会显示失败并自动重试 */
@@ -193,6 +215,7 @@ export default function Write() {
       setPlain(ed.getText({ blockSeparator: "\n" }));
       setAi(aiChars(ed.state.doc));
       save(loadedFor.current, ed);
+      setDirty(true);
       // 有字了，「大纲」状态自动变「写作中」
       const st = useStore.getState();
       const at = findChapter(st.vols, loadedFor.current);
@@ -200,6 +223,8 @@ export default function Write() {
     },
   });
 
+  /** 立刻存掉排队中的正文（按编辑器里正在显示的那一章存，切章读取期间也不会存错章） */
+  const flushNow = (): Promise<unknown> => (editor && loadedFor.current && save.pending() ? save.flush(loadedFor.current, editor) : Promise.resolve());
   // 编辑器里的写作限制高亮：限制或本章人物变了就重算
   useEffect(() => {
     setLimitScan((text) => scanLimits(text, limits, scanOpts).hits.map((h) => ({ ...h, title: "写作限制：" + (limits.find((l) => l.id === h.id)?.text ?? "") + (h.unsure ? "（在对白里，认不出是谁说的，你来判断）" : "") })));
@@ -210,22 +235,27 @@ export default function Write() {
   useEffect(() => {
     if (!editor || !cur) return;
     const id = cur.ch.id;
+    const my = ++loadSeq.current;
     if (loadedFor.current === id) return;
     const prev = loadedFor.current;
     if (prev) {
       const snap = snapOf(editor);
-      const p = save.pending() ? save.flush(prev, editor) : Promise.resolve();
+      const p = flushNow();
       p.then(() => snapshot(work.id, prev, snap, "离开本章"))
         .catch(() => {})
         // 离开这一章：不等 2 分钟，马上看要不要归档
         .then(() => arc.check(prev))
         .catch(() => {});
     }
-    loadedFor.current = null;
     repo.loadText(id).then((t) => {
+      // 读取期间又切了章：这份结果已经过时
+      if (my !== loadSeq.current || editor.isDestroyed) return;
       const draft = readDraft(id);
       const useDraft = !!draft && draft.at > (t?.updated ?? 0) && draft.html !== t?.html && confirm(`这一章有一份没来得及存进数据库的草稿（${fmtTime(draft.at)}，${draft.words} 字）。要恢复它吗？\n选「取消」会丢掉草稿，保留库里的版本。`);
       if (draft && !useDraft) clearDraft(id);
+      // 装进新章之前，把读取期间在上一章打的字先按上一章存掉，不能串进新章
+      const shown = loadedFor.current;
+      if (shown && save.pending()) save.flush(shown, editor);
       loadInto(editor, useDraft ? draft!.html : t?.html || "");
       loadedFor.current = id;
       if (useDraft) saveNow(id, snapOf(editor));
@@ -235,14 +265,13 @@ export default function Write() {
     });
   }, [editor, cur?.ch.id]);
 
-  useEffect(() => () => {
-    if (editor && loadedFor.current && save.pending()) save.flush(loadedFor.current, editor);
-  }, [editor]);
+  useEffect(() => () => void flushNow(), [editor]);
 
-  // 关窗那一瞬间来不及写库：先同步留一份本机草稿，下次打开会提示恢复
+  // 关窗那一瞬间来不及写库：先同步留一份本机草稿，下次打开会提示恢复。
+  // 网页版：App 先冲刷过（排队状态已清），写进浏览器库还要 0.4 秒，所以总是留一份；和库里一样的草稿下次打开会自动丢掉
   useEffect(() => {
     const f = () => {
-      if (editor && loadedFor.current && save.pending()) writeDraft(loadedFor.current, snapOf(editor));
+      if (editor && loadedFor.current && (save.pending() || !isTauri)) writeDraft(loadedFor.current, snapOf(editor));
     };
     window.addEventListener("beforeunload", f);
     return () => window.removeEventListener("beforeunload", f);
@@ -251,9 +280,7 @@ export default function Write() {
   // 关窗、切书时由 store 统一冲刷正文
   useEffect(
     () =>
-      registerFlush(() => {
-        if (editor && loadedFor.current && save.pending()) return save.flush(loadedFor.current, editor);
-      }),
+      registerFlush(() => flushNow()),
     [editor, save],
   );
 
@@ -341,12 +368,16 @@ export default function Write() {
 
   async function suggest() {
     if (!editor || !cur) return;
+    // 结果回来时已经切到别的章，就不再显示（否则点一下会把上一章的续写插进新章）
+    const id = loadedFor.current;
+    const seq = loadSeq.current;
+    const stale = () => loadedFor.current !== id || loadSeq.current !== seq;
     setPanel({ kind: "sugg", loading: true, opts: [] });
     try {
       const opts = await T.suggestNext(ctx(), cur, before(), after());
-      setPanel({ kind: "sugg", loading: false, opts });
+      if (!stale()) setPanel({ kind: "sugg", loading: false, opts });
     } catch (e) {
-      setPanel({ kind: "sugg", loading: false, opts: [], err: errText(e) });
+      if (!stale()) setPanel({ kind: "sugg", loading: false, opts: [], err: errText(e) });
     }
   }
 
@@ -484,9 +515,13 @@ export default function Write() {
 
   async function check() {
     if (!cur) return;
+    const id = loadedFor.current;
+    const seq = loadSeq.current;
     const rule = ruleCheck(plain, chars, calls, vols, cur.no);
     setPanel({ kind: "check", loading: true, rule, ai: [], cont: [] });
     const [a, b] = await Promise.allSettled([T.checkCharacters(ctx(), cur, plain), T.checkContinuity(ctx(), cur, plain)]);
+    // 已经切到别的章：检查结果是上一章的，不显示
+    if (loadedFor.current !== id || loadSeq.current !== seq) return;
     const err = [a, b].find((x): x is PromiseRejectedResult => x.status === "rejected");
     setPanel({ kind: "check", loading: false, rule, ai: a.status === "fulfilled" ? a.value : [], cont: b.status === "fulfilled" ? b.value : [], err: err ? errText(err.reason) : undefined });
   }
@@ -538,6 +573,11 @@ export default function Write() {
   const open = plants(vols, events).filter((p) => p.plantNo && !p.payNo && p.plantNo <= cur.no);
   const aiTotal = ai[0] + ai[1];
   const fontList = [...SYSTEM_FONTS, ...prefs.fonts.map((f) => [`"${f.name}"`, f.name] as [string, string])];
+  // 网页版字体存不进 IndexedDB 时没有路径，不进 prefs.fonts；这次打开期间已经装上的也列出来
+  const webFont = /^"(导入·.+)"$/.exec(prefs.font)?.[1];
+  if (webFont && !fontList.some(([v]) => v === prefs.font) && [...((document as any).fonts ?? [])].some((f: FontFace) => f.family.replace(/^["']|["']$/g, "") === webFont)) fontList.push([prefs.font, webFont]);
+  // 记着的字体已经不在列表里（网页版刷新后导入的字体没了）：按默认字体显示，和下拉框一致
+  const font = fontList.some(([v]) => v === prefs.font) ? prefs.font : EDITOR_DEFAULT.font;
   const set = (p: Partial<EditorPrefs>) => setPrefs({ ...prefs, ...p });
 
   return (
@@ -573,7 +613,7 @@ export default function Write() {
                         <span>
                           第{r.no}章 {r.ch.title}
                         </span>
-                        <small>{words[r.ch.id] ? (words[r.ch.id] / 1000).toFixed(1) + "k" : r.ch.status === "大纲" ? "纲" : ""}</small>
+                        <small>{words[r.ch.id] ? (words[r.ch.id] < 1000 ? words[r.ch.id] : (words[r.ch.id] / 1000).toFixed(1) + "k") : r.ch.status === "大纲" ? "纲" : ""}</small>
                       </button>
                     ))}
                 </li>
@@ -721,7 +761,9 @@ export default function Write() {
                   // 标成「已写」：存完马上归档
                   if (v === "已写") {
                     const id = cur.ch.id;
-                    (save.pending() && editor ? save.flush(id, editor) : Promise.resolve()).then(() => arc.check(id)).catch(() => {});
+                    flushNow()
+                      .then(() => arc.check(id))
+                      .catch(() => {});
                   }
                 }}
               >
@@ -729,7 +771,7 @@ export default function Write() {
                 <option>写作中</option>
                 <option>已写</option>
               </select>
-              <ArchiveBtn id={cur.ch.id} flush={() => (save.pending() && editor ? save.flush(cur.ch.id, editor) : Promise.resolve())} />
+              <ArchiveBtn id={cur.ch.id} flush={flushNow} />
             </div>
             <div className="chap-meta">
               {cur.ch.scenes.length} 个场景{cur.ch.pl ? " · " + phaseName(plan, cur.ch.pl) : ""} · 本章 {chWords} 字
@@ -737,7 +779,7 @@ export default function Write() {
             <div
               id="editor"
               className={prefs.aiMark ? undefined : "ai-off"}
-              style={{ fontFamily: prefs.font, fontSize: prefs.size, lineHeight: prefs.lineHeight, ["--indent" as any]: prefs.indent ? "2em" : "0" }}
+              style={{ fontFamily: font, fontSize: prefs.size, lineHeight: prefs.lineHeight, ["--indent" as any]: prefs.indent ? "2em" : "0" }}
               onContextMenu={(e) => {
                 // 按住 Shift 右键还是系统菜单
                 if (e.shiftKey || !editor) return;
@@ -804,7 +846,7 @@ export default function Write() {
           )}
 
           <div className="status" aria-live="polite">
-            <SaveState saving={saving} savedAt={savedAt} err={saveErr} retry={() => useStore.getState().flushSaves()} />
+            <SaveState saving={saving + (dirty ? 1 : 0)} savedAt={savedAt} err={saveErr} retry={() => useStore.getState().flushSaves()} />
             <span>
               本章 <b>{chWords}</b> 字
             </span>
@@ -823,8 +865,8 @@ export default function Write() {
               </i>
             </span>
             <span title="本章正文里浅黄底（AI 原样）和虚线（AI 写后你改过）的字，占本章字数的比例。润色只算真正改动的字。">
-              本章 AI 占比 <b>{chWords ? Math.round((aiTotal / chWords) * 100) : 0}%</b>
-              {ai[1] ? `（其中 ${Math.round((ai[1] / Math.max(1, chWords)) * 100)}% 你改过）` : ""}
+              本章 AI 占比 <b>{chWords ? Math.min(100, Math.round((aiTotal / chWords) * 100)) : 0}%</b>
+              {ai[1] ? `（其中 ${Math.min(100, Math.round((ai[1] / Math.max(1, chWords)) * 100))}% 你改过）` : ""}
             </span>
             <label className="ai-mark-tg" title="关掉只是不显示浅黄底和虚线，AI 写的字照样记录，AI 占比照常计算">
               <input type="checkbox" checked={prefs.aiMark} onChange={(e) => set({ aiMark: e.target.checked })} /> 显示 AI 标记
@@ -851,6 +893,7 @@ export default function Write() {
               open={openChapter}
               close={() => setPanel({ kind: "none" })}
               refreshWords={() => repo.allTexts(work.id).then((ts) => setWords(Object.fromEntries(ts.map((t) => [t.id, t.words]))))}
+              addToday={addToday}
             />
           ) : panel.kind === "keys" ? (
             <KeysPanel close={() => setPanel({ kind: "none" })} />
@@ -1229,7 +1272,13 @@ function SaveState({ saving, savedAt, err, retry }: { saving: number; savedAt: n
 
 function HistoryPanel({ panel, current, close, pick, restore }: { panel: Extract<Panel, { kind: "hist" }>; current: string; close: () => void; pick: (id: string) => void; restore: (v: repo.VersionFull) => void }) {
   const sel = panel.sel;
-  const parts = useMemo(() => (sel ? diffText(sel.plain ?? "", current) : []), [sel, current]);
+  // 停笔 1 秒后再按最新正文重新对比，不在每次按键时整章 diff
+  const [cmp, setCmp] = useState(current);
+  useEffect(() => {
+    const t = setTimeout(() => setCmp(current), 1000);
+    return () => clearTimeout(t);
+  }, [current]);
+  const parts = useMemo(() => (sel ? diffText(sel.plain ?? "", cmp) : []), [sel, cmp]);
   return (
     <div className="panel ai-out hist">
       <h3>
@@ -1318,7 +1367,7 @@ function KeysPanel({ close }: { close: () => void }) {
   );
 }
 
-function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, close, refreshWords }: { editor: Editor | null; workId: string; curId: string; chs: { ch: { id: string; title: string }; no: number }[]; replace: boolean; open: (id: string) => void; close: () => void; refreshWords: () => void }) {
+function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, close, refreshWords, addToday }: { editor: Editor | null; workId: string; curId: string; chs: { ch: { id: string; title: string }; no: number }[]; replace: boolean; open: (id: string) => void; close: () => void; refreshWords: () => void; addToday: (delta: number) => void }) {
   const [q, setQ] = useState("");
   const [rep, setRep] = useState("");
   const [showRep, setShowRep] = useState(startReplace);
@@ -1330,10 +1379,20 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
   const hits = useMemo(() => (editor ? findInDoc(editor.state.doc, q) : []), [editor, q, ver, curId]);
   useEffect(() => {
     if (!editor) return;
-    const f = () => setVer((v) => v + 1);
-    editor.on("update", f);
-    return () => void editor.off("update", f);
+    // 切章载入新章不发 update，要看 transaction 才知道正文换了
+    const f = ({ transaction }: { transaction: { docChanged: boolean } }) => void (transaction.docChanged && setVer((v) => v + 1));
+    editor.on("transaction", f);
+    return () => void editor.off("transaction", f);
   }, [editor]);
+  // 换了一章，从第 1 处重新数
+  useEffect(() => setIdx(0), [curId]);
+  // 关掉查找面板时收起命中的选中底色
+  useEffect(
+    () => () => {
+      if (editor && !editor.isDestroyed && keepSelKey.getState(editor.state)) editor.view.dispatch(editor.state.tr.setMeta(keepSelKey, false));
+    },
+    [editor],
+  );
 
   useEffect(() => {
     if (scope !== "book" || !q) return setBook(null);
@@ -1355,19 +1414,39 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
     };
   }, [scope, q, workId, ver, curId, chs.length]);
 
-  function go(i: number) {
-    if (!editor || !hits.length) return;
-    const k = ((i % hits.length) + hits.length) % hits.length;
+  function go(i: number, list: Hit[] = hits) {
+    if (!editor || !list.length) return;
+    const k = ((i % list.length) + list.length) % list.length;
     setIdx(k);
-    editor.chain().focus().setTextSelection(hits[k]).scrollIntoView().run();
+    // 不把焦点交给正文：焦点留在查找框，再按回车还是「下一处」，不会在正文里删字换段。选中底色用 sel-keep 画
+    editor
+      .chain()
+      .setTextSelection(list[k])
+      .command(({ tr }) => {
+        tr.setMeta(keepSelKey, true);
+        return true;
+      })
+      .scrollIntoView()
+      .run();
   }
   function replaceOne() {
     if (!editor || !q) return;
     const { from, to } = editor.state.selection;
-    if (editor.state.doc.textBetween(from, to) === q) {
-      editor.chain().focus().insertContentAt({ from, to }, rep).run();
-      setTimeout(() => go(idx), 0);
-    } else go(idx);
+    if (editor.state.doc.textBetween(from, to) !== q) return go(idx);
+    // 和「本章全部替换」一样按纯文字换，不当成 HTML 解析
+    editor
+      .chain()
+      .command(({ tr }) => {
+        if (rep) tr.insertText(rep, from, to);
+        else tr.delete(from, to);
+        return true;
+      })
+      .run();
+    // 按替换后的正文重新找，直接选中后面的下一处
+    const list = findInDoc(editor.state.doc, q);
+    const k = list.findIndex((h) => h.from >= from + rep.length);
+    if (list.length) go(k < 0 ? 0 : k, list);
+    else setIdx(0);
   }
   function replaceChapter(): number {
     if (!editor || !q) return 0;
@@ -1390,6 +1469,7 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
     const total = book.reduce((a, x) => a + x.n, 0);
     if (!confirm(`把全书 ${book.length} 章里的 ${total} 处「${q}」换成「${rep}」？每章换之前都会先留一份快照，可以在「历史」里找回。`)) return;
     let n = 0;
+    let delta = 0;
     for (const r of book) {
       if (r.id === curId) {
         if (editor) await snapshot(workId, curId, snapOf(editor), "全书替换前");
@@ -1402,10 +1482,12 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
       if (!out.n) continue;
       await snapshot(workId, r.id, { html: t.html, plain: t.plain, words: t.words, ai: t.ai_chars }, "全书替换前");
       const plain = htmlToText(out.html);
-      await repo.saveText(workId, r.id, out.html, plain, countWords(plain), t.ai_chars);
+      delta += await repo.saveText(workId, r.id, out.html, plain, countWords(plain), t.ai_chars);
       arc.noteEdit(r.id);
       n += out.n;
     }
+    // 其他章直接写库，字数变化也要算进「今日」
+    addToday(delta);
     refreshWords();
     setVer((v) => v + 1);
     toast(`已替换 ${n} 处`);

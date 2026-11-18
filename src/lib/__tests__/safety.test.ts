@@ -24,11 +24,13 @@ describe("快照规则", () => {
     expect(needSnapshot(last, now, { words: 400, html: "y" })).toBe(true);
     expect(needSnapshot({ ...last, at: now - SNAP_EVERY }, now, { words: 1001, html: "y" })).toBe(true);
   });
-  it("字数骤降：原来 500 字以上、少一半以上", () => {
+  it("字数骤降：少一半以上、且少了不止 50 字（短章也算）", () => {
     expect(isShrink(3000, 0)).toBe(true);
     expect(isShrink(3000, 1400)).toBe(true);
     expect(isShrink(3000, 1600)).toBe(false);
-    expect(isShrink(400, 0)).toBe(false);
+    expect(isShrink(453, 1)).toBe(true);
+    expect(isShrink(400, 0)).toBe(true);
+    expect(isShrink(30, 0)).toBe(false);
   });
   it("保留规则：一天内全留，一周内每小时一份，一月内每天一份，更早每周一份", () => {
     const now = Date.UTC(2026, 10, 12, 12);

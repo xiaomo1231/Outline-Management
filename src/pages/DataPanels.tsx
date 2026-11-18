@@ -60,6 +60,8 @@ async function pickFile(exts: string[], label: string): Promise<ArrayBuffer | nu
 type Fmt = "txt" | "md" | "docx";
 
 async function exportRange(fmt: Fmt, from: number, to: number) {
+  // 先把编辑器里还没存的字存进库，不然最后打的字导不出来
+  await useStore.getState().flushSaves();
   const s = useStore.getState();
   if (!s.work) return;
   const rows = allChapters(s.vols).filter((r) => r.no >= from && r.no <= to);
@@ -148,6 +150,10 @@ export interface TxtPick {
   name: string;
   author: string;
   intro: string;
+  /** 开头没归到任何章的文字 */
+  rest: string;
+  /** 把开头这段也导入成第一章「引子」 */
+  restAsChapter: boolean;
 }
 
 /** 选一个 txt，切好卷章，猜好书名，先给用户预览 */
@@ -161,7 +167,9 @@ export async function pickTxtBook(): Promise<TxtPick | null> {
     toast("这个文件是空的");
     return null;
   }
-  return { book, ...guessMeta(raw, book.preface) };
+  const m = guessMeta(raw, book.preface);
+  // 开头的文字放不进简介（超过 300 字）时，默认导入成一章，免得丢
+  return { book, ...m, restAsChapter: m.rest.length > 300 };
 }
 
 /** 按预览的结果建书，返回作品 id */
@@ -169,7 +177,8 @@ export async function createFromTxt(p: TxtPick): Promise<string> {
   const vols: Volume[] = [];
   const texts: { id: string; text: string }[] = [];
   let chapters = 0;
-  for (const v of p.book.vols) {
+  const bv = p.restAsChapter && p.rest.trim() && p.book.vols.length ? [{ ...p.book.vols[0], chapters: [{ title: "引子", text: p.rest }, ...p.book.vols[0].chapters] }, ...p.book.vols.slice(1)] : p.book.vols;
+  for (const v of bv) {
     const vol: Volume = { id: uid("v"), title: v.title, chapters: [] };
     for (const c of v.chapters) {
       const ch = { ...newChapter(c.title), status: "已写" as const };
@@ -221,6 +230,14 @@ export async function importPackFile(): Promise<string | null> {
   const s = useStore.getState();
   if (s.work?.id === p.work.id) await s.flushSaves();
   await importPack(p);
+  // 老作品包没带「上次写到哪章」：和作品库卡片一样，取最后一章有字的
+  if (!p.lastChapter) {
+    const chs = allChapters(await repo.loadDoc<Volume[]>(p.work.id, "outline", []));
+    const cur = await repo.getSetting<string | null>("lastChapter:" + p.work.id, null);
+    const withText = new Set((await repo.allTexts(p.work.id)).filter((t) => t.words > 0).map((t) => t.id));
+    const r = [...chs].reverse().find((x) => withText.has(x.ch.id));
+    if (r && !chs.some((x) => x.ch.id === cur)) await repo.setSetting("lastChapter:" + p.work.id, r.ch.id);
+  }
   await s.loadWorks();
   toast(`已导入《${p.work.name}》`);
   return p.work.id;
@@ -234,7 +251,7 @@ export function BackupPanel() {
   const [list, setList] = useState<bk.BackupFile[]>([]);
   const [dir2, setDir2] = useState("");
   const [open, setOpen] = useState<string | null>(null);
-  const [chs, setChs] = useState<{ id: string; words: number; updated: number }[]>([]);
+  const [chs, setChs] = useState<{ id: string; words: number; updated: number; title?: string }[]>([]);
   const [step, setStep] = useState("");
   const load = () => bk.listBackups().then(setList);
   useEffect(() => {
@@ -324,7 +341,13 @@ export function BackupPanel() {
                         setStep("恢复完成，正在重新加载……");
                         setTimeout(() => location.reload(), 800);
                       } catch (e: any) {
-                        setStep("恢复失败：" + (e?.message || e));
+                        const msg = "恢复失败：" + (e?.message || e);
+                        setStep(msg);
+                        // 库里一半新一半旧时，界面手里的旧数据不能再写回去：提示后重新加载
+                        if (e instanceof bk.RestoreError && e.dirty) {
+                          alert(msg + "\n\n点确定后重新加载。");
+                          location.reload();
+                        }
                       }
                     }}
                   >
@@ -332,21 +355,39 @@ export function BackupPanel() {
                   </AsyncButton>
                   {open === b.name && (
                     <ul className="scan-list">
-                      {chs.filter((c) => titles.has(c.id)).length ? (
+                      {/* 已经删掉的章（备份时还在大纲里）也列出来，可以放回书里 */}
+                      {chs.filter((c) => titles.has(c.id) || c.title != null).length ? (
                         chs
-                          .filter((c) => titles.has(c.id))
+                          .filter((c) => titles.has(c.id) || c.title != null)
                           .map((c) => (
                             <li key={c.id}>
                               <span>
-                                {titles.get(c.id)} · {c.words.toLocaleString()} 字
+                                {titles.get(c.id) ?? `（已删除）${c.title || "无题章"}`} · {c.words.toLocaleString()} 字
                               </span>
-                              <AsyncButton
-                                onClick={async () => {
-                                  if (work && (await bk.pullChapter(b.name, work.id, c.id))) toast("已放进这一章的「历史」，到写作页对比后再决定用不用");
-                                }}
-                              >
-                                放进历史
-                              </AsyncButton>
+                              {titles.has(c.id) ? (
+                                <AsyncButton
+                                  onClick={async () => {
+                                    if (work && (await bk.pullChapter(b.name, work.id, c.id))) toast("已放进这一章的「历史」，到写作页对比后再决定用不用");
+                                  }}
+                                >
+                                  放进历史
+                                </AsyncButton>
+                              ) : (
+                                <AsyncButton
+                                  onClick={async () => {
+                                    if (!work) return;
+                                    const err = await bk.restoreDeletedChapter(b.name, work.id, c.id);
+                                    if (err) return toast(err);
+                                    useStore.getState().edit("vols", (d) => {
+                                      if (!d.length) d.push({ id: uid("v"), title: "第一卷", chapters: [] });
+                                      d[d.length - 1].chapters.push({ ...newChapter(c.title || ""), id: c.id, status: "已写" });
+                                    });
+                                    toast(`已放回书里：最后一卷末尾的「${c.title || "无题章"}」`);
+                                  }}
+                                >
+                                  放回书里
+                                </AsyncButton>
+                              )}
                             </li>
                           ))
                       ) : (
