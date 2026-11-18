@@ -1,3 +1,4 @@
+import { mentioned } from "../lib/mention";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -481,7 +482,8 @@ export default function Write() {
   const scanRows = scanOn ? scan(plain, bans) : [];
   const rhythm = sentenceLengths(plain).slice(-80);
   const maxR = Math.max(10, ...rhythm);
-  const people = chars.filter((c) => c.name && (plain.includes(c.name) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
+  const olWho = mentioned(chars, plain + "\n" + (cur.ch.ol ?? ""));
+  const people = chars.filter((c) => c.name && (olWho.includes(c.name.trim()) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
   const open = plants(vols, events).filter((p) => p.plantNo && !p.payNo && p.plantNo <= cur.no);
   const aiTotal = ai[0] + ai[1];
   const fontList = [...SYSTEM_FONTS, ...prefs.fonts.map((f) => [`"${f.name}"`, f.name] as [string, string])];
@@ -816,7 +818,7 @@ export default function Write() {
                 </div>
               ))
             ) : (
-              <Empty>正文或场景里提到的人物会出现在这里。</Empty>
+              <Empty>正文、本章大纲或场景里提到的人物会出现在这里。</Empty>
             )}
             {open.length > 0 && (
               <>

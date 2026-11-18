@@ -1,4 +1,5 @@
-import type { Arc, Chapter, Scene, StoryEvent, Volume } from "./types";
+import type { Arc, Chapter, Character, Scene, StoryEvent, Volume } from "./types";
+import { mentioned } from "./mention";
 import { uid } from "./util";
 import { phaseName, where, bookLen } from "./plan";
 
@@ -290,7 +291,7 @@ export interface SplitChapterIn {
  * 把 AI 拆好的逐章大纲放进第 v 卷：按顺序先填这一卷已有的章（只填空着的章名、大纲、钩子；
  * 已经有场景的章不加场景），不够再在卷末新建章。新场景自动加进时间线。
  */
-export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number, list: (SplitChapterIn | null)[], toTimeline = true): { filled: number; added: number; scenes: number } {
+export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number, list: (SplitChapterIn | null)[], toTimeline = true, chars: Pick<Character, "name" | "f">[] = []): { filled: number; added: number; scenes: number } {
   const vol = vols[v];
   let filled = 0;
   let added = 0;
@@ -318,7 +319,7 @@ export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number
       added++;
     }
     for (const s of x.scenes) {
-      const sc: Scene = { ...newScene(s.t), goal: s.goal, conf: s.conf, who: s.who, plant: s.plant || "", pay: s.pay || "", day: s.day ?? null, place: s.place || "", ai: true };
+      const sc: Scene = { ...newScene(s.t), goal: s.goal, conf: s.conf, who: [...new Set([...(s.who ?? []), ...mentioned(chars, [s.t, s.goal, s.conf].join("\n"))])], plant: s.plant || "", pay: s.pay || "", day: s.day ?? null, place: s.place || "", ai: true };
       ch.scenes.push(sc);
       fresh.add(sc.id);
       scenes++;
