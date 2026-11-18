@@ -532,7 +532,7 @@ export default function Write() {
   const open = plants(vols, events).filter((p) => p.plantNo && !p.payNo && p.plantNo <= cur.no);
   const aiTotal = ai[0] + ai[1];
   const fontList = [...SYSTEM_FONTS, ...prefs.fonts.map((f) => [`"${f.name}"`, f.name] as [string, string])];
-  // 网页版导入的字体没有路径，不进 prefs.fonts；这次打开期间已经装上的也列出来
+  // 网页版字体存不进 IndexedDB 时没有路径，不进 prefs.fonts；这次打开期间已经装上的也列出来
   const webFont = /^"(导入·.+)"$/.exec(prefs.font)?.[1];
   if (webFont && !fontList.some(([v]) => v === prefs.font) && [...((document as any).fonts ?? [])].some((f: FontFace) => f.family.replace(/^["']|["']$/g, "") === webFont)) fontList.push([prefs.font, webFont]);
   // 记着的字体已经不在列表里（网页版刷新后导入的字体没了）：按默认字体显示，和下拉框一致
