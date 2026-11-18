@@ -30,13 +30,19 @@ export function isShrink(oldWords: number, newWords: number): boolean {
 
 /**
  * 保留规则：24 小时内全留；7 天内每小时留最新一份；30 天内每天一份；更早的每周一份。
+ * 从备份取回的版本是作者特意放进来对比的，用的又是备份时的旧时间，不参与分桶，一直保留。
  * 返回要保留的 id。
  */
-export function keepVersions(list: { id: string; at: number }[], now: number): Set<string> {
+export const PULLED_REASON = "从备份取回";
+export function keepVersions(list: { id: string; at: number; reason?: string | null }[], now: number): Set<string> {
   const keep = new Set<string>();
   const seen = new Set<string>();
   const sorted = [...list].sort((a, b) => b.at - a.at);
   for (const v of sorted) {
+    if (v.reason === PULLED_REASON) {
+      keep.add(v.id);
+      continue;
+    }
     const age = now - v.at;
     let bucket: string;
     if (age < DAY) {

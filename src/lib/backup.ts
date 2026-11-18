@@ -1,8 +1,8 @@
 // 数据库备份与恢复（只在桌面版里有）。备份是整库快照，放在数据目录的 backups 文件夹。
-import { getDb, isTauri } from "./db";
+import { getDb, isTauri, type Db } from "./db";
 import * as repo from "./repo";
-import { today } from "./util";
-import { backupTime, backupsToKeep } from "./versions";
+import { fmtTime, today } from "./util";
+import { backupTime, backupsToKeep, PULLED_REASON } from "./versions";
 
 export const BACKUP_EVERY = 2 * 3600_000;
 
@@ -139,7 +139,7 @@ export async function pullChapter(name: string, work: string, ch: string): Promi
     const r = ((await b.select(`SELECT html, plain, words FROM chapter_text WHERE id=?`, [ch])) as any[])[0];
     if (!r) return false;
     const at = backupTime(name) ?? Date.now();
-    await repo.addVersion(work, ch, r.html ?? "", r.plain ?? "", r.words ?? 0, "从备份取回", at);
+    await repo.addVersion(work, ch, r.html ?? "", r.plain ?? "", r.words ?? 0, PULLED_REASON, at);
     return true;
   } finally {
     await b.close();
@@ -148,29 +148,80 @@ export async function pullChapter(name: string, work: string, ch: string): Promi
 
 const TABLES = ["works", "docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive", "settings", "usage"];
 
-/** 整库恢复：先给现在的库备份一份，再把备份里的每张表抄回来。之后要重新加载页面 */
+type TableData = { t: string; cols: string[]; rows: Record<string, unknown>[] };
+type Reader = { all(sql: string, params?: unknown[]): Promise<Record<string, unknown>[]> };
+
+/** 把备份里每张表（只取现在的库也有的列）整个读出来。备份损坏会在这一步报错，现在的库还没动 */
+export async function readTables(src: Reader, db: Db): Promise<TableData[]> {
+  const out: TableData[] = [];
+  for (const t of TABLES) {
+    const mine = ((await db.all<{ name: string }>(`PRAGMA table_info(${t})`)) ?? []).map((x) => x.name);
+    if (!mine.length) continue;
+    const has = (await src.all(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [t])).length > 0;
+    if (!has) {
+      out.push({ t, cols: mine, rows: [] });
+      continue;
+    }
+    const theirs = (await src.all(`PRAGMA table_info(${t})`)).map((x) => String(x.name));
+    const cols = mine.filter((c) => theirs.includes(c));
+    out.push({ t, cols, rows: cols.length ? await src.all(`SELECT ${cols.join(",")} FROM ${t}`) : [] });
+  }
+  return out;
+}
+
+async function writeTables(db: Db, data: TableData[], onStep?: (s: string) => void) {
+  for (const { t, cols, rows } of data) {
+    onStep?.(`恢复 ${t}……`);
+    await db.exec(`DELETE FROM ${t}`);
+    if (!cols.length) continue;
+    const q = `INSERT OR REPLACE INTO ${t}(${cols.join(",")}) VALUES(${cols.map(() => "?").join(",")})`;
+    for (const r of rows) await db.exec(q, cols.map((c) => r[c] ?? null));
+  }
+}
+
+/** 恢复中途出错。dirty 表示没能退回原样，库里可能一半新一半旧 */
+export class RestoreError extends Error {
+  constructor(msg: string, public dirty: boolean) {
+    super(msg);
+  }
+}
+
+/** 用读好的备份数据替换现在的库。中途出错时把恢复前的数据写回去，尽量做到要么全换、要么不动 */
+export async function replaceTables(db: Db, data: TableData[], onStep?: (s: string) => void, pre = ""): Promise<void> {
+  // 先把现在的库整个记下来，出错时退回
+  const old = await readTables(db, db);
+  try {
+    await writeTables(db, data, onStep);
+  } catch (e: any) {
+    const why = e?.message || String(e);
+    onStep?.("恢复出错，正在退回恢复前的数据……");
+    try {
+      await writeTables(db, old);
+    } catch {
+      throw new RestoreError(`恢复中途出错（${why}），也没能退回原样。请到「备份与恢复」里整库恢复${pre ? ` ${pre} 的` : "最上面"}那份（恢复前自动备份的）。`, true);
+    }
+    throw new RestoreError(`恢复中途出错（${why}），已退回恢复前的数据，什么都没改。`, false);
+  }
+}
+
+/** 整库恢复：先给现在的库备份一份，把备份整个读出来，再替换每张表。之后要重新加载页面 */
 export async function restoreAll(name: string, onStep?: (s: string) => void): Promise<void> {
   onStep?.("先给现在的数据备份一份……");
   const pre = await backup({ prune: false });
   if (pre.startsWith("备份失败")) throw new Error("恢复前的备份没成功，停止恢复：" + pre);
+  const latest = (await listBackups())[0];
   const db = await getDb();
+  onStep?.("读取备份……");
   const b = await openBackup(name);
+  let data: TableData[];
   try {
-    for (const t of TABLES) {
-      const has = ((await b.select(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [t])) as any[]).length > 0;
-      const mine = ((await db.all<{ name: string }>(`PRAGMA table_info(${t})`)) ?? []).map((x) => x.name);
-      onStep?.(`恢复 ${t}……`);
-      await db.exec(`DELETE FROM ${t}`);
-      if (!has) continue;
-      const theirs = ((await b.select(`PRAGMA table_info(${t})`)) as { name: string }[]).map((x) => x.name);
-      const cols = mine.filter((c) => theirs.includes(c));
-      const rows = (await b.select(`SELECT ${cols.join(",")} FROM ${t}`)) as Record<string, unknown>[];
-      const q = `INSERT OR REPLACE INTO ${t}(${cols.join(",")}) VALUES(${cols.map(() => "?").join(",")})`;
-      for (const r of rows) await db.exec(q, cols.map((c) => r[c] ?? null));
-    }
+    data = await readTables({ all: async (sql, params) => (await b.select(sql, params)) as Record<string, unknown>[] }, db);
+  } catch (e: any) {
+    throw new Error("这份备份读不出来，现在的数据没有动：" + (e?.message || e));
   } finally {
     await b.close();
   }
+  await replaceTables(db, data, onStep, latest ? fmtTime(latest.at) : "");
 }
 
 /** 启动时检查数据库是否完好。返回 null 表示没问题 */

@@ -1,5 +1,6 @@
 // 查找替换：本章在编辑器里做，全书的其他章直接改存好的正文。
 import type { Node as PMNode } from "@tiptap/pm/model";
+import { parseHtml } from "./util";
 
 export interface Hit {
   from: number;
@@ -51,8 +52,8 @@ export function snippets(text: string, q: string, max = 3): string[] {
 /** 替换存好的正文 HTML 里的文字（只动文字，不动标签） */
 export function replaceInHtml(html: string, q: string, rep: string): { html: string; n: number } {
   if (!q) return { html, n: 0 };
-  const d = document.createElement("div");
-  d.innerHTML = html;
+  // 用不挂在页面上的文档解析，正文里夹带的脚本、onerror 不会执行
+  const d = parseHtml(html);
   let n = 0;
   // 先按段落处理，命中被 AI 标记切开时也能换
   d.querySelectorAll("p").forEach((p) => {
@@ -61,7 +62,7 @@ export function replaceInHtml(html: string, q: string, rep: string): { html: str
     if (!k) return;
     n += k;
     const nodes: Text[] = [];
-    const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    const w = d.ownerDocument.createTreeWalker(p, NodeFilter.SHOW_TEXT);
     for (let x = w.nextNode(); x; x = w.nextNode()) nodes.push(x as Text);
     // 能在单个文字节点里换的直接换
     let left = k;

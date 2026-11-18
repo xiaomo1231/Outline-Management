@@ -126,8 +126,8 @@ export async function latestVersion(ch: Id): Promise<VersionFull | null> {
 /** 按保留规则清理一本书的旧快照，返回删掉的份数 */
 export async function pruneVersions(work: Id, now = Date.now()): Promise<number> {
   const db = await getDb();
-  const rows = await db.all<{ id: string; chapter_id: string; at: number }>(`SELECT id, chapter_id, at FROM chapter_versions WHERE work_id=?`, [work]);
-  const by = new Map<string, { id: string; at: number }[]>();
+  const rows = await db.all<{ id: string; chapter_id: string; at: number; reason: string | null }>(`SELECT id, chapter_id, at, reason FROM chapter_versions WHERE work_id=?`, [work]);
+  const by = new Map<string, { id: string; at: number; reason: string | null }[]>();
   for (const r of rows) (by.get(r.chapter_id) ?? by.set(r.chapter_id, []).get(r.chapter_id)!).push(r);
   let n = 0;
   for (const list of by.values()) {

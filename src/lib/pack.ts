@@ -1,6 +1,10 @@
 // 作品包：把一本书的全部数据导出成一个文件，换电脑时导入。
 import { getDb } from "./db";
 import type { Work } from "./types";
+import { cleanHtml } from "./util";
+
+/** 这些表里的 html 列是正文，导入外来的包时要清洗，免得夹带脚本 */
+const HTML_TABLES = new Set<string>(["chapter_text", "chapter_versions"]);
 
 export const PACK_TABLES = ["docs", "chapter_text", "chapter_versions", "daily", "memory", "votes", "diary", "chats", "chapter_archive"] as const;
 
@@ -54,6 +58,7 @@ export async function importPack(p: WorkPack): Promise<void> {
     for (const r of rows) {
       if (!r || typeof r !== "object" || r.work_id !== id) continue;
       const cols = mine.filter((c) => c in r);
+      if (HTML_TABLES.has(t) && typeof r.html === "string") r.html = cleanHtml(r.html);
       await db.exec(`INSERT OR REPLACE INTO ${t}(${cols.join(",")}) VALUES(${cols.map(() => "?").join(",")})`, cols.map((c) => r[c] ?? null));
     }
   }

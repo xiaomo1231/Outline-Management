@@ -18,10 +18,32 @@ export function countWords(text: string): number {
   return cjk + latin;
 }
 
+/** 把 HTML 解析成一个不挂在页面上的文档：里面的脚本、onerror 之类都不会执行，图片也不会加载 */
+export function parseHtml(html: string): HTMLElement {
+  return new DOMParser().parseFromString(html, "text/html").body;
+}
+
 export function htmlToText(html: string): string {
-  const d = document.createElement("div");
-  d.innerHTML = html.replace(/<\/p>/g, "</p>\n");
+  const d = parseHtml(html.replace(/<\/p>/g, "</p>\n"));
   return (d.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+const UNSAFE_TAGS = "script,iframe,frame,frameset,object,embed,link,meta,base,style,form";
+/** 清洗外来的正文 HTML（作品包等）：去掉脚本类标签、on* 事件属性和 javascript: 链接 */
+export function cleanHtml(html: string): string {
+  if (!html) return html;
+  const d = parseHtml(html);
+  d.querySelectorAll(UNSAFE_TAGS).forEach((el) => el.remove());
+  d.querySelectorAll("*").forEach((el) => {
+    for (const a of [...el.attributes]) {
+      const n = a.name.toLowerCase();
+      // 去掉空白和控制字符后再看协议，防 "java\nscript:" 这类写法
+      const v = a.value.replace(/[\s\u0000-\u001f]/g, "").toLowerCase();
+      const link = /(href|src|action)$/.test(n);
+      if (n.startsWith("on") || (link && (/^(javascript|vbscript):/.test(v) || (v.startsWith("data:") && !v.startsWith("data:image/"))))) el.removeAttribute(a.name);
+    }
+  });
+  return d.innerHTML;
 }
 
 export function debounce<T extends (...a: any[]) => any>(fn: T, ms: number) {

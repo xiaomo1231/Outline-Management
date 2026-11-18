@@ -341,7 +341,13 @@ export function BackupPanel() {
                         setStep("恢复完成，正在重新加载……");
                         setTimeout(() => location.reload(), 800);
                       } catch (e: any) {
-                        setStep("恢复失败：" + (e?.message || e));
+                        const msg = "恢复失败：" + (e?.message || e);
+                        setStep(msg);
+                        // 库里一半新一半旧时，界面手里的旧数据不能再写回去：提示后重新加载
+                        if (e instanceof bk.RestoreError && e.dirty) {
+                          alert(msg + "\n\n点确定后重新加载。");
+                          location.reload();
+                        }
                       }
                     }}
                   >

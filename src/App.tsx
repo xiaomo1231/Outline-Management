@@ -159,7 +159,7 @@ function useAutoBackup() {
   }, []);
 }
 
-/** 每天定时做每日整理；打开时发现漏跑就补；关窗口时跑一次自动整理 */
+/** 每天定时做每日整理；打开时发现漏跑就补；关窗口时跑一次自动整理并备份 */
 function useScheduler(workId: string | null) {
   const running = useRef(false);
   useEffect(() => {
@@ -203,13 +203,23 @@ function useScheduler(workId: string | null) {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
       un = await win.onCloseRequested(async (e) => {
-        if (closing) return;
+        // 收尾期间再点「×」也要拦住：不调用 preventDefault，Tauri 会立刻销毁窗口，打断备份和整理
         e.preventDefault();
+        if (closing) return;
         closing = true;
         const s = useStore.getState();
-        try {
+        const t0 = Date.now();
+        const finish = async () => {
           await s.flushSaves();
-          if (s.work) await Promise.race([mem.scriptRun(s.work, s.vols), new Promise((r) => setTimeout(r, 5000))]);
+          if (s.work) await mem.scriptRun(s.work, s.vols);
+          // 没打开书、或整理正在跑被跳过时，scriptRun 不会备份，这里补一份
+          if ((await repo.getSetting<number>("lastBackup", 0)) < t0) await bk.backup();
+        };
+        try {
+          // 正常等收尾跑完；万一卡住，最多等 20 秒也要能关掉
+          await Promise.race([finish(), new Promise((r) => setTimeout(r, 20_000))]);
+        } catch {
+          /* 收尾出错也照样关窗 */
         } finally {
           await win.destroy();
         }
