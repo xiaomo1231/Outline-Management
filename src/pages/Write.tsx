@@ -935,7 +935,20 @@ export default function Write() {
           )}
 
           <div className="panel">
-            <h3>本章大纲</h3>
+            <h3 className="h3-act">
+              <span>本章大纲</span>
+              <button
+                className="btn sm"
+                type="button"
+                title="到大纲页，直接定位到这一章"
+                onClick={() => {
+                  useStore.setState({ chapterId: cur.ch.id });
+                  useStore.getState().go("outline");
+                }}
+              >
+                在大纲中编辑
+              </button>
+            </h3>
             {cur.ch.ol?.trim() && <p className="ch-ol">{cur.ch.ol}</p>}
             {cur.ch.scenes.length ? (
               <ol className="scene-list">
