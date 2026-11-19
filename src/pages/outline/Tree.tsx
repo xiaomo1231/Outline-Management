@@ -113,6 +113,22 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   const chs = allChapters(vols);
   const cur = chs.find((r) => r.ch.id === sel.ch) ?? chs[0];
 
+  // 打开大纲页时（比如从写作页切过来）直接滚到选中的章；这一卷收起了就先展开
+  useEffect(() => {
+    const r = chs.find((x) => x.ch.id === sel.ch);
+    if (!r || r === chs[0]) return;
+    const vid = vols[r.v]?.id;
+    if (vid && fold[vid]) setFold({ ...fold, [vid]: 0 });
+    const t = setTimeout(() => document.querySelector(`[data-ch="${r.ch.id}"]`)?.scrollIntoView({ block: "center" }), 30);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 换了选中的章或场景，右边章卡回到顶部
+  useEffect(() => {
+    document.querySelector(".split > .det")?.scrollTo?.(0, 0);
+  }, [sel.ch, sel.s, sel.vol]);
+
   /** target 是章时放到这一章（si 为场景位置）；是数字时表示把章放到这一卷末尾 */
   function drop(target: ChRef | number, si: number | null) {
     if (!drag) return;
@@ -224,6 +240,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                   return (
                     <div
                       key={r.ch.id}
+                      data-ch={r.ch.id}
                       className={"ch" + (on ? " on" : "") + (r.ch.scenes.length ? "" : " bare") + (drag?.id === r.ch.id && drag.k === "c" ? " dragging" : "")}
                       draggable
                       onDragStart={(e) => {

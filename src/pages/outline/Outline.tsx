@@ -66,7 +66,12 @@ export default function Outline() {
   const [omode, setOmode] = useState<"simple" | "detail">("simple");
   const [emode, setEmode] = useState<"simple" | "detail">("simple");
   const vols = useStore((s) => s.vols);
-  const [sel, setSel] = useState<Sel>({ ch: vols[0]?.chapters[0]?.id ?? null, s: -1 });
+  // 默认选中写作页正在写的那一章
+  const [sel, setSel] = useState<Sel>(() => {
+    const cur = useStore.getState().chapterId;
+    const has = cur && vols.some((v) => v.chapters.some((c) => c.id === cur));
+    return { ch: has ? cur : vols[0]?.chapters[0]?.id ?? null, s: -1 };
+  });
   const [esel, setEsel] = useState<string | null>(null);
   const [ai, setAi] = useState<{ tab: Tab; node: ReactNode } | null>(null);
   const say: Say = (node) => setAi({ tab, node });
