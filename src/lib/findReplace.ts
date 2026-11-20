@@ -1,6 +1,6 @@
 // 查找替换：本章在编辑器里做，全书的其他章直接改存好的正文。
 import type { Node as PMNode } from "@tiptap/pm/model";
-import { parseHtml } from "./util";
+import { countWords, parseHtml } from "./util";
 
 export interface Hit {
   from: number;
@@ -68,6 +68,8 @@ export function replaceInHtml(html: string, q: string, rep: string): { html: str
     const nodes: Text[] = [];
     const w = d.ownerDocument.createTreeWalker(p, NodeFilter.SHOW_TEXT);
     for (let x = w.nextNode(); x; x = w.nextNode()) nodes.push(x as Text);
+    // 和编辑器里替换一样：被改过的段落里，AI 原样的字变成“AI 写后作者改过”
+    p.querySelectorAll("span.ai").forEach((x) => x.classList.replace("ai", "aied"));
     // 能在单个文字节点里换的直接换
     let left = k;
     for (const tn of nodes) {
@@ -98,4 +100,13 @@ function lineText(p: Element): string {
     else if ((x as Element).tagName === "BR") s += "\n";
   }
   return s;
+}
+
+/** 存好的正文里 AI 写的字数（浅黄底加虚线），和编辑器里的 AI 占比同一口径 */
+export function aiCharsInHtml(html: string): number {
+  let n = 0;
+  parseHtml(html)
+    .querySelectorAll("span.ai, span.aied")
+    .forEach((x) => (n += countWords(x.textContent || "")));
+  return n;
 }

@@ -42,6 +42,7 @@ export function docText(doc: PMNode): { text: string; at: (i: number) => number 
 export const ScanHighlight = Extension.create({
   name: "scanHighlight",
   addProseMirrorPlugins() {
+    let last: { doc: PMNode; fn: LimitScan; set: DecorationSet } | null = null;
     return [
       new Plugin<boolean>({
         key: scanKey,
@@ -52,6 +53,8 @@ export const ScanHighlight = Extension.create({
         props: {
           decorations(state) {
             if (!scanKey.getState(state)) return null;
+            // 只移动光标、拖选时正文没变：用上次算好的，不必每次整章重新扫描
+            if (last && last.doc === state.doc && last.fn === limitScan) return last.set;
             const decos: Decoration[] = [];
             // 按整段文字匹配再换回文档位置：加粗、AI 标记会把一段拆成几个文本节点，逐个节点匹配会漏掉跨节点的套话
             const { text, at } = docText(state.doc);
@@ -69,7 +72,9 @@ export const ScanHighlight = Extension.create({
               const b = at(h.to);
               if (a >= 0 && b > a) decos.push(Decoration.inline(a, b, { class: "lim-hit" + (h.unsure ? " unsure" : ""), title: h.title }));
             }
-            return DecorationSet.create(state.doc, decos);
+            const set = DecorationSet.create(state.doc, decos);
+            last = { doc: state.doc, fn: limitScan, set };
+            return set;
           },
         },
       }),
