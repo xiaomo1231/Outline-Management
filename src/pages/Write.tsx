@@ -15,7 +15,7 @@ import { AiRangeTrack, aiRangeNow, markAiRange } from "../components/aiRange";
 import { Guide } from "../components/Guide";
 import { useStore, toast, registerFlush } from "../lib/store";
 import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraft, type Snap } from "../lib/chapterSave";
-import { diffText } from "../lib/diff";
+import { changeOf, diffText } from "../lib/diff";
 import { loadInto, publishText, setDoc } from "../lib/editorText";
 import * as repo from "../lib/repo";
 import { allChapters, findChapter, newChapter, plants } from "../lib/outline";
@@ -87,7 +87,8 @@ type Panel =
   | { kind: "none" }
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
   // noSel：续写时没选中文字（取的是光标所在段落作上下文），结果只能插进去，不能「替换选中」
-  | { kind: "sel"; op: string; noSel: boolean; text: string; done: boolean; err?: string; note: string; skip: string[] }
+  // orig：送去处理的原文，用来和结果对照、判断 AI 有没有改
+  | { kind: "sel"; op: string; noSel: boolean; orig: string; text: string; done: boolean; err?: string; note: string; skip: string[] }
   | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
@@ -440,7 +441,7 @@ export default function Write() {
     abort.current = new AbortController();
     // 记下原文位置，之后正文的每次改动都会把它挪到对的地方
     editor.view.dispatch(markAiRange(editor.state, from, to));
-    setPanel({ kind: "sel", op, noSel, text: "", done: false, note, skip });
+    setPanel({ kind: "sel", op, noSel, orig: sel, text: "", done: false, note, skip });
     try {
       await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
@@ -1040,6 +1041,35 @@ export default function Write() {
   );
 }
 
+/** 在原文上改的操作：结果要和原文对照，一字没改要告诉作者 */
+const REWRITE_OPS = ["润色", "改写", "换说法", "缩写", "改对白口吻"];
+
+/** 结果和原文一样时，「改得更明显些」带上的要求 */
+const STRONGER: Record<string, string> = {
+  润色: "上一次一处都没改。这次请主动找出可以更精炼、更顺、更有画面感的句子，至少改几处，但不改变情节、人物动作和对白的意思",
+  改对白口吻: "上一次一处都没改。这次请让每句对白更有这个人的口吻，至少改几句",
+};
+
+/** 结果和原文的对照：删掉的划线，新加的标绿 */
+function SelDiff({ parts, n, open: open0 }: { parts: [number, string][]; n: number; open: boolean }) {
+  const [open, setOpen] = useState(open0);
+  return (
+    <div className="sel-diff">
+      <div className="row">
+        <span className="legend" style={{ margin: 0 }}>和原文比改了 {n} 处</span>
+        <button className="btn sm" type="button" onClick={() => setOpen(!open)}>
+          {open ? "收起对照" : "看改了哪里"}
+        </button>
+      </div>
+      {open && (
+        <div className="diff-text">
+          {parts.map(([op, t], i) => (op < 0 ? <del key={i}>{t}</del> : op > 0 ? <ins key={i}>{t}</ins> : <span key={i}>{t}</span>))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RedoNote({ note, skip: skip0, redo, limits }: { note: string; skip: string[]; redo: (n: string, skip: string[]) => void; limits: WriteLimit[] }) {
   const [v, setV] = useState(note);
   const [skip, setSkip] = useState(skip0);
@@ -1087,7 +1117,10 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         })}
       </div>
     );
-  if (panel.kind === "sel")
+  if (panel.kind === "sel") {
+    const body = splitLimitNote(panel.text).body;
+    // 润色、改写这类在原文上改的操作：生成完和原文对照，一字没改就直接说
+    const ch = panel.done && !panel.err && !panel.noSel && body.trim() && REWRITE_OPS.includes(panel.op) ? changeOf(panel.orig, body) : null;
     return (
       <div className="panel ai-out">
         <h3>
@@ -1097,6 +1130,15 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} skip={panel.skip} empty={panel.done ? "" : "正在写……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
         {panel.done && !panel.err && !splitLimitNote(panel.text).body.trim() && <Empty>AI 这次没有写出内容，可以重新生成。</Empty>}
+        {ch && ch.same && (
+          <div className="sel-same">
+            <p>{panel.op === "润色" ? "这段已经很通顺，AI 没找到需要润色的地方，结果和原文一字不差。" : `AI 这次${panel.op}的结果和原文一字不差。`}</p>
+            <button className="btn primary" type="button" onClick={() => redoSel([panel.note.trim(), STRONGER[panel.op] ?? `上一次的结果和原文一字不差，这次请真正按要求${panel.op}`].filter(Boolean).join("；"), panel.skip)}>
+              改得更明显些
+            </button>
+          </div>
+        )}
+        {ch && !ch.same && <SelDiff parts={ch.parts} n={ch.n} open={panel.op === "润色"} />}
         {panel.done && <RedoNote note={panel.note} skip={panel.skip} redo={redoSel} limits={limits} />}
         <div className="addrow">
           {!panel.done && (
@@ -1104,7 +1146,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
               停止
             </button>
           )}
-          {panel.done && splitLimitNote(panel.text).body.trim() && (
+          {panel.done && body.trim() && !ch?.same && (
             <>
               {!panel.noSel && (
                 <button className="btn primary" type="button" onClick={() => applySel("replace")}>
@@ -1119,6 +1161,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
         </div>
       </div>
     );
+  }
   if (panel.kind === "fill")
     return (
       <div className="panel ai-out">

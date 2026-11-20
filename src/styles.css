@@ -637,3 +637,12 @@ table.lanes tbody th{white-space:nowrap;text-align:left;position:sticky;left:0;b
 .lim-presets label .x{border:0;background:none;color:var(--muted);padding:0 0 0 2px;cursor:pointer}
 .lim-body{align-items:start}
 .lim-body>span{padding-top:5px}
+/* 润色等结果和原文的对照、一字没改的提示 */
+.sel-diff{margin-top:8px}
+.sel-diff .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sel-diff .btn.sm{padding:2px 8px;font-size:12px}
+.diff-text{margin-top:6px;white-space:pre-wrap;font-family:var(--f-body);line-height:1.8;border:1px solid var(--line);border-radius:6px;padding:10px;max-height:260px;overflow:auto}
+.diff-text del{color:var(--seal);background:var(--seal-soft);text-decoration:line-through}
+.diff-text ins{text-decoration:none;background:color-mix(in srgb,var(--good) 22%,transparent);border-bottom:1px solid var(--good)}
+.sel-same{margin-top:8px;padding:8px 10px;border:1px dashed var(--line);border-radius:6px;font-size:13px}
+.sel-same p{margin:0 0 6px}
