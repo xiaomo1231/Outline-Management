@@ -18,7 +18,9 @@ import { persistChapter, readDraft, clearDraft, snapshot, shrinkToast, writeDraf
 import { changeOf, diffText } from "../lib/diff";
 import { loadInto, publishText, setDoc } from "../lib/editorText";
 import * as repo from "../lib/repo";
-import { allChapters, findChapter, newChapter, plants } from "../lib/outline";
+import { allChapters, findChapter, newChapter, plants, type ChRef } from "../lib/outline";
+import { FocusField } from "../components/FocusField";
+import { focusSummary } from "../lib/focus";
 import { countWords, debounce, fmtHM, fmtTime, htmlToText, today, uid } from "../lib/util";
 import { scan, sentenceLengths } from "../lib/aiscan";
 import { EDITOR_DEFAULT, useSetting, type EditorPrefs } from "../lib/hooks";
@@ -88,8 +90,8 @@ type Panel =
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
   // noSel：续写时没选中文字（取的是光标所在段落作上下文），结果只能插进去，不能「替换选中」
   // orig：送去处理的原文，用来和结果对照、判断 AI 有没有改
-  | { kind: "sel"; op: string; noSel: boolean; orig: string; text: string; done: boolean; err?: string; note: string; skip: string[] }
-  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
+  | { kind: "sel"; op: string; noSel: boolean; orig: string; text: string; done: boolean; err?: string; note: string; skip: string[]; focus?: string }
+  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean; focus?: string }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
   | { kind: "find"; replace: boolean }
@@ -445,7 +447,7 @@ export default function Write() {
     abort.current = new AbortController();
     // 记下原文位置，之后正文的每次改动都会把它挪到对的地方
     editor.view.dispatch(markAiRange(editor.state, from, to));
-    setPanel({ kind: "sel", op, noSel, orig: sel, text: "", done: false, note, skip });
+    setPanel({ kind: "sel", op, noSel, orig: sel, text: "", done: false, note, skip, focus: cur && T.FOCUS_OPS.has(op) ? focusSummary(cur.ch) : "" });
     try {
       await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
@@ -505,7 +507,7 @@ export default function Write() {
     abort.current = new AbortController();
     const existing = editor.getText({ blockSeparator: "\n" });
     const cont = !!existing.trim();
-    setPanel({ kind: "fill", scene: "", text: "", done: false, cont });
+    setPanel({ kind: "fill", scene: "", text: "", done: false, cont, focus: focusSummary(cur.ch) });
     try {
       await T.fillChapter(ctx(), cur, (_i, t) => setPanel((p) => (p.kind === "fill" ? { ...p, scene: t } : p)), (d) => setPanel((p) => (p.kind === "fill" ? { ...p, text: p.text + d } : p)), abort.current.signal, existing);
       setPanel((p) => (p.kind === "fill" ? { ...p, done: true } : p));
@@ -976,11 +978,12 @@ export default function Write() {
               </button>
             </h3>
             {cur.ch.ol?.trim() && <p className="ch-ol">{cur.ch.ol}</p>}
+            <ChapterFocus key={cur.ch.id} cur={cur} />
             {cur.ch.scenes.length ? (
               <ol className="scene-list">
                 {cur.ch.scenes.map((s) => (
                   <li key={s.id}>
-                    <b>{s.t}</b>
+                    <b>{s.key && <span className="key-star" title="重点场景">★</span>}{s.t}</b>
                     {s.goal && <p>目标：{s.goal}</p>}
                     {s.conf && <p>冲突：{s.conf}</p>}
                     {(s.plant || s.pay) && (
@@ -1111,6 +1114,42 @@ function RedoNote({ note, skip: skip0, redo, limits }: { note: string; skip: str
   );
 }
 
+/** 生成结果顶部：这次照着的本章写作重点 */
+function FocusUsed({ focus }: { focus?: string }) {
+  if (!focus) return null;
+  return (
+    <p className="focus-used">
+      <b>这次照着的写作重点：</b>
+      {focus}
+    </p>
+  );
+}
+
+function ChapterFocus({ cur }: { cur: ChRef }) {
+  const edit = useStore((s) => s.edit);
+  const [open, setOpen] = useState(false);
+  const f = cur.ch.focus ?? "";
+  const set = (v: string) => edit("vols", (d) => void (d[cur.v].chapters[cur.c].focus = v));
+  if (open)
+    return (
+      <div className="ch-focus-edit">
+        <FocusField value={f} onChange={set} compact />
+        <button className="btn sm" type="button" onClick={() => setOpen(false)} style={{ marginTop: 6 }}>
+          完成
+        </button>
+      </div>
+    );
+  return (
+    <p className="ch-focus">
+      <span className="lab">写作重点</span>
+      {f.trim() ? f : <span className="lab">没写，AI 会平均用力</span>}{" "}
+      <button className="btn sm" type="button" onClick={() => setOpen(true)} title="这一章想多写什么、怎么写">
+        {f.trim() ? "改" : "写一下"}
+      </button>
+    </p>
+  );
+}
+
 function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange, stop, redoSel, limits, scanOpts, fix, checkLim }: { panel: Panel; setPanel: (p: Panel) => void; insertInline: (t: string) => void; applySel: (m: "replace" | "after") => void; applyFill: (m: "end" | "replace") => void; addChange: (i: T.OocIssue) => void; stop: () => void; redoSel: (note: string, skip: string[]) => void; limits: WriteLimit[]; scanOpts: ScanOpts; fix: (body: string, hits: LimitHit[]) => Promise<void>; checkLim: (text: string) => Promise<T.ContIssue[]> }) {
   if (panel.kind === "none" || panel.kind === "hist" || panel.kind === "find" || panel.kind === "keys" || panel.kind === "export") return null;
   const close = (
@@ -1152,6 +1191,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           <span>AI {panel.op}{panel.done ? " · 已生成" : " · 生成中"}</span>
           {close}
         </h3>
+        <FocusUsed focus={panel.focus} />
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} skip={panel.skip} empty={panel.done ? "" : "正在写……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
         {panel.done && !panel.err && !splitLimitNote(panel.text).body.trim() && <Empty>AI 这次没有写出内容，可以重新生成。</Empty>}
@@ -1194,6 +1234,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           <span>草稿区{panel.scene ? ` · ${panel.done ? "已生成" : "正在写"}「${panel.scene}」` : panel.done ? " · 已生成" : ""}</span>
           {close}
         </h3>
+        <FocusUsed focus={panel.focus} />
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} empty={panel.done ? "" : "正在组装上下文……"} onFix={fix} onExcept={addExcept} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
         {panel.done && panel.text && limits.some((l) => !l.off) && <LimCheckBtn text={panel.text} run={checkLim} />}
