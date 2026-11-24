@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { useStore, toast } from "../../lib/store";
-import { allChapters, applyVolumeSplit, dayLabel, findScene, moveChapter, moveScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
+import { allChapters, applyVolumeSplit, chapterRanges, pickChapters, dayLabel, findScene, moveChapter, moveScene, newChapter, newScene, parseQuickChapters, SHARE, sceneToEvent, sortEvents, type ChRef } from "../../lib/outline";
 import { phaseName } from "../../lib/plan";
 import * as T from "../../lib/ai/tasks";
 import { errText } from "../../lib/ai/client";
@@ -11,7 +11,7 @@ import type { Say } from "./Outline";
 import type { Scene } from "../../lib/types";
 import { addMentioned, mentioned, SCENE_TEXT, sceneText } from "../../lib/mention";
 import { ctx, names } from "./ctx";
-import { trashChapter, trashScene } from "../../lib/trash";
+import { trashChapter, trashChapters, trashScene } from "../../lib/trash";
 import * as repo from "../../lib/repo";
 import * as arc from "../../lib/ai/archive";
 
@@ -24,6 +24,16 @@ export interface Sel {
 }
 
 const ST = ["大纲", "写作中", "已写"];
+
+/** 所属阶段下拉的选项：[值, 显示名]，值是 "段:阶段"，空串是未归属 */
+function phaseOptions(plan: ReturnType<typeof useStore.getState>["plan"]): [string, string][] {
+  const out: [string, string][] = [["", "未归属"]];
+  plan.forEach((a, ai) => {
+    if (a.gap) out.push([`${ai}:-1`, `${a.name} · 段前过渡`]);
+    a.ph.forEach((p, pi) => out.push([`${ai}:${pi}`, `${a.name} · ${p.n}`]));
+  });
+  return out;
+}
 
 export function TreeActions({ mode, setMode, say, onSync, sel, setSel }: { mode: "simple" | "detail"; setMode: (m: "simple" | "detail") => void; say: Say; onSync: () => void; sel: Sel; setSel: (s: Sel) => void }) {
   return (
@@ -112,6 +122,33 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
   const toggle = (id: string) => setFold({ ...fold, [id]: fold[id] ? 0 : 1 });
   const chs = allChapters(vols);
   const cur = chs.find((r) => r.ch.id === sel.ch) ?? chs[0];
+  // 多选的章（Ctrl / Shift 点章名），两章以上时右边换成批量操作卡
+  const [pick, setPick] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState<string | null>(null);
+  const picked = pick.filter((id) => chs.some((r) => r.ch.id === id));
+  const multi = picked.length >= 2;
+
+  useEffect(() => {
+    if (!multi) return;
+    const k = (e: KeyboardEvent) => e.key === "Escape" && setPick([]);
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [multi]);
+
+  function clickChapter(e: MouseEvent, id: string) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      const next = pickChapters(chs.map((r) => r.ch.id), picked, id, e.shiftKey ? "range" : "toggle", anchor, sel.s < 0 ? sel.ch : null);
+      if (!e.shiftKey) setAnchor(id);
+      else if (!anchor) setAnchor(sel.ch ?? id);
+      if (next.length >= 2) return setPick(next);
+      setPick([]);
+      if (next.length === 1) setSel({ ch: next[0], s: -1 });
+      return;
+    }
+    setPick([]);
+    setAnchor(id);
+    setSel({ ch: id, s: -1 });
+  }
 
   // 打开大纲页时（比如从写作页切过来）直接滚到选中的章；这一卷收起了就先展开
   useEffect(() => {
@@ -235,7 +272,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
               {!fold[v.id] && chs
                 .filter((r) => r.v === vi)
                 .map((r) => {
-                  const on = sel.ch === r.ch.id && sel.s < 0;
+                  const on = multi ? picked.includes(r.ch.id) : sel.ch === r.ch.id && sel.s < 0;
                   const tg = phaseName(plan, r.ch.pl);
                   return (
                     <div
@@ -256,7 +293,12 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                       }}
                       onDragEnd={() => setDrag(null)}
                     >
-                      <div className="cht" onClick={() => setSel({ ch: r.ch.id, s: -1 })}>
+                      <div
+                        className="cht"
+                        title="Ctrl 点选可以多选，Shift 点选连选一段，然后批量改状态、阶段或删除"
+                        onMouseDown={(e) => e.shiftKey && e.preventDefault()}
+                        onClick={(e) => clickChapter(e, r.ch.id)}
+                      >
                         {r.ch.scenes.length > 0 ? (
                           <button type="button" className="fold" aria-expanded={!fold[r.ch.id]} title={fold[r.ch.id] ? "展开场景" : "收起场景"} onClick={(e) => { e.stopPropagation(); toggle(r.ch.id); }}>
                             {fold[r.ch.id] ? "▸" : "▾"}
@@ -295,7 +337,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                                 e.stopPropagation();
                                 drop(r, si);
                               }}
-                              onClick={() => setSel({ ch: r.ch.id, s: si })}
+                              onClick={() => { setPick([]); setSel({ ch: r.ch.id, s: si }); }}
                             >
                               <span className="grip" aria-hidden="true">
                                 ⋮⋮
@@ -347,7 +389,92 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
           </button>
         </div>
       </div>
-      <Det mode={mode} sel={sel} setSel={setSel} say={say} goEvent={goEvent} />
+      {multi ? (
+        <BatchCard ids={picked} clear={() => setPick([])} setSel={setSel} />
+      ) : (
+        <Det mode={mode} sel={sel} setSel={setSel} say={say} goEvent={goEvent} />
+      )}
+    </div>
+  );
+}
+
+/** 多选了几章时右边的批量操作卡：一次改状态、所属阶段，或一起删 */
+function BatchCard({ ids, clear, setSel }: { ids: string[]; clear: () => void; setSel: (s: Sel) => void }) {
+  const vols = useStore((s) => s.vols);
+  const plan = useStore((s) => s.plan);
+  const edit = useStore((s) => s.edit);
+  const [busy, setBusy] = useState(false);
+  const set = new Set(ids);
+  const rs = allChapters(vols).filter((r) => set.has(r.ch.id));
+  const range = chapterRanges(rs.map((r) => r.no));
+  const count = (st: string) => rs.filter((r) => r.ch.status === st).length;
+  const pls = new Set(rs.map((r) => (r.ch.pl ? `${r.ch.pl.a}:${r.ch.pl.p}` : "")));
+  const apply = (fn: (ch: any) => void) =>
+    edit("vols", (d) => {
+      for (const v of d) for (const c of v.chapters) if (set.has(c.id)) fn(c);
+    });
+  return (
+    <div className="panel det batch">
+      <h3>已选 {rs.length} 章</h3>
+      <p className="batch-range">{range}</p>
+      <Field label="状态" hint={ST.map((x) => `${x} ${count(x)}`).join(" · ")}>
+        <div className="seg" role="group" aria-label="批量改状态" style={{ margin: 0 }}>
+          {ST.map((x) => (
+            <button
+              key={x}
+              type="button"
+              aria-pressed={count(x) === rs.length}
+              onClick={() => {
+                apply((c) => void (c.status = x));
+                toast(`${range}都改成了「${x}」`);
+              }}
+            >
+              {x}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="所属阶段" hint={pls.size > 1 ? "这几章现在分属不同阶段，选一个就都改过去" : "对应篇幅规划里的事件段和阶段"}>
+        <select
+          aria-label="批量改所属阶段"
+          value={pls.size === 1 ? [...pls][0] : "*"}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "*") return;
+            const q = v.split(":");
+            apply((c) => void (c.pl = v ? { a: +q[0], p: +q[1] } : null));
+            toast(`${range}的所属阶段已改`);
+          }}
+        >
+          {pls.size > 1 && <option value="*">（各不相同）</option>}
+          {phaseOptions(plan).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </Field>
+      <div className="ft" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button className="btn" type="button" onClick={clear}>
+          取消多选
+        </button>
+        <button
+          className="btn"
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            if (!confirm(`删除${range}（共 ${rs.length} 章）？正文会一起放进回收站，30 天内可以在「设置 → 回收站」恢复。`)) return;
+            setBusy(true);
+            try {
+              const n = await trashChapters(useStore.getState().work!.id, ids);
+              toast(`已把 ${n} 章放进回收站`);
+              clear();
+              setSel({ ch: null, s: -1 });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          删除这 {rs.length} 章
+        </button>
+      </div>
+      <div className="legend" style={{ marginTop: 10 }}>Ctrl 点章名加减一章，Shift 点章名连选一段，Esc 或单击某一章退出多选。</div>
     </div>
   );
 }
@@ -413,11 +540,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
         if (e) e[k] = v;
       }
     });
-  const plOpts: [string, string][] = [["", "未归属"]];
-  plan.forEach((a, ai) => {
-    if (a.gap) plOpts.push([`${ai}:-1`, `${a.name} · 段前过渡`]);
-    a.ph.forEach((p, pi) => plOpts.push([`${ai}:${pi}`, `${a.name} · ${p.n}`]));
-  });
+  const plOpts = phaseOptions(plan);
   const ev = s?.ev ? events.find((e) => e.id === s.ev) : undefined;
   const num = (v: string) => (v === "" ? null : +v);
 

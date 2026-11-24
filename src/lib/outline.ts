@@ -433,3 +433,36 @@ export function splitChapterOutline(text: string): { t: string; ol: string }[] {
   }
   return out.map((x) => ({ t: x.t.slice(0, 30), ol: x.ol.join(" ").slice(0, 400) }));
 }
+
+/**
+ * 大纲页多选章节：ctrl 点选加减一章，shift 点选从 anchor 连选到这一章。
+ * order 是全书章节 id 的顺序，返回值按 order 排好。cur 是当前单选着的章（还没进多选时，ctrl 点第二章要把它带上）。
+ */
+export function pickChapters(order: string[], picked: string[], id: string, how: "toggle" | "range", anchor: string | null, cur: string | null): string[] {
+  const at = (x: string | null) => (x ? order.indexOf(x) : -1);
+  let out: Set<string>;
+  if (how === "range") {
+    const a = at(anchor) >= 0 ? at(anchor) : at(cur) >= 0 ? at(cur) : at(id);
+    const b = at(id);
+    if (b < 0) return picked;
+    out = new Set(order.slice(Math.min(a, b), Math.max(a, b) + 1));
+  } else {
+    out = new Set(picked.length ? picked : at(cur) >= 0 ? [cur!] : []);
+    if (out.has(id)) out.delete(id);
+    else out.add(id);
+  }
+  return order.filter((x) => out.has(x));
+}
+
+/** 把章号列成「第1–3、5、8章」 */
+export function chapterRanges(nos: number[]): string {
+  const s = [...new Set(nos)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < s.length; ) {
+    let j = i;
+    while (j + 1 < s.length && s[j + 1] === s[j] + 1) j++;
+    parts.push(j > i ? `${s[i]}–${s[j]}` : `${s[i]}`);
+    i = j + 1;
+  }
+  return parts.length ? `第${parts.join("、")}章` : "";
+}
