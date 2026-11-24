@@ -113,6 +113,8 @@ export default function Write() {
   const [ban, setBan] = useState<string | null>(null);
   /** 选中文字后右键弹出的 AI 菜单 */
   const [menu, setMenu] = useState<{ x: number; y: number; sel: boolean } | null>(null);
+  // 目录里右键某一章弹出的菜单
+  const [tocMenu, setTocMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [words, setWords] = useState<Record<string, number>>({});
   const [todayWords, setTodayWords] = useState(0);
   const [todayExtra, setTodayExtra] = useState({ pasted: 0, ai: 0 });
@@ -349,12 +351,14 @@ export default function Write() {
     );
   }
 
-  function addChapter(vi?: number) {
+  // vi 给了：加在那一卷末尾；afterId 给了：加在那一章后面；都没给：加在当前章后面
+  function addChapter(vi?: number, afterId?: string) {
     const c = newChapter("");
+    const at = afterId ? findChapter(vols, afterId) : cur;
     edit("vols", (d) => {
       if (!d.length) d.push({ id: uid("v"), title: "第一卷", chapters: [] });
-      const v = vi ?? (cur ? cur.v : d.length - 1);
-      d[v].chapters.splice(cur && vi == null ? cur.c + 1 : d[v].chapters.length, 0, c);
+      const v = vi ?? (at ? at.v : d.length - 1);
+      d[v].chapters.splice(at && vi == null ? at.c + 1 : d[v].chapters.length, 0, c);
     });
     openChapter(c.id);
   }
@@ -630,7 +634,18 @@ export default function Write() {
                   </div>
                   {!shut &&
                     list.map((r) => (
-                      <button key={r.ch.id} type="button" className={"toc-i" + (r.ch.id === cur.ch.id ? " cur" : "")} onClick={() => openChapter(r.ch.id)}>
+                      <button
+                        key={r.ch.id}
+                        type="button"
+                        className={"toc-i" + (r.ch.id === cur.ch.id ? " cur" : "")}
+                        onClick={() => openChapter(r.ch.id)}
+                        onContextMenu={(e) => {
+                          // 按住 Shift 右键还是系统菜单
+                          if (e.shiftKey) return;
+                          e.preventDefault();
+                          setTocMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 80), id: r.ch.id });
+                        }}
+                      >
                         <span>
                           第{r.no}章 {r.ch.title}
                         </span>
@@ -646,6 +661,16 @@ export default function Write() {
               在当前章后加一章
             </button>
           </div>
+          {tocMenu && (
+            <TocMenu
+              at={tocMenu}
+              close={() => setTocMenu(null)}
+              add={() => {
+                setTocMenu(null);
+                addChapter(undefined, tocMenu.id);
+              }}
+            />
+          )}
         </nav>
 
         <div className="stack">
@@ -1278,6 +1303,28 @@ function LimCheckBtn({ text, run }: { text: string; run: (t: string) => Promise<
         </Issue>
       ))}
     </div>
+  );
+}
+
+function TocMenu({ at, close, add }: { at: { x: number; y: number }; close: () => void; add: () => void }) {
+  useEffect(() => {
+    const off = () => close();
+    window.addEventListener("scroll", off, true);
+    window.addEventListener("resize", off);
+    return () => {
+      window.removeEventListener("scroll", off, true);
+      window.removeEventListener("resize", off);
+    };
+  }, [close]);
+  return (
+    <>
+      <div className="ctx-mask" onMouseDown={(e) => { e.preventDefault(); close(); }} onContextMenu={(e) => { e.preventDefault(); close(); }} />
+      <div className="ctx-menu" role="menu" aria-label="章节操作" style={{ left: at.x, top: at.y }} onKeyDown={(e) => e.key === "Escape" && close()}>
+        <button type="button" role="menuitem" autoFocus onClick={add}>
+          在这一章后加一章
+        </button>
+      </div>
+    </>
   );
 }
 
