@@ -11,6 +11,7 @@ import * as repo from "../repo";
 import { clip, countWords } from "../util";
 import { DEFAULT_CONT_LEN, lenSpec, writeToTarget } from "./length";
 import { getBible } from "../memory";
+import { olText } from "../chapterOutline";
 
 const sys = (content: string): Msg => ({ role: "system", content });
 const user = (content: string): Msg => ({ role: "user", content });
@@ -286,7 +287,7 @@ ${later.map((r) => outlineOf(c, r).replace(/场景(\d+)「/g, (_m, n) => `场景
 
 逐章检查：哪些地方和新的前文对不上（人物去向、在不在场、处境、关键物品、已经发生过的事）。只列需要改的章，不用改的不要列。
 返回 JSON：{"chapters":[{"no":章号,"ol":"改后的本章大纲，不用改就空字符串","scenes":[{"i":场景序号,"goal":"","conf":"","who":["人物"]}],"why":"一句话说为什么改"}]}
-scenes 里只放要改的场景和要改的字段，不改的字段不要写。${limitsReminder(c, "plan")}`),
+scenes 里只放要改的场景和要改的字段，不改的字段不要写。大纲里如果有「【起因】」这类段名，改后的大纲也照样按段写、保留段名。${limitsReminder(c, "plan")}`),
     ],
     { temperature: 0.4 },
   );
@@ -315,7 +316,7 @@ function outlineDigest(c: Ctx): string {
 }
 
 function chLine(r: ChRef): string {
-  return `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]${r.ch.ol ? "｜大纲：" + r.ch.ol : ""}` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : "");
+  return `第${r.no}章 ${r.ch.title || "（未命名）"} [${r.ch.status}]${olText(r.ch) ? "｜大纲：" + olText(r.ch) : ""}` + (r.ch.scenes.length ? "\n" + r.ch.scenes.map((s) => `  - ${s.t}｜目标:${s.goal || "无"}｜冲突:${s.conf || "无"}｜人物:${s.who.join("、") || "无"}${s.plant ? "｜埋:" + s.plant : ""}${s.pay ? "｜收:" + s.pay : ""}`).join("\n") : "");
 }
 
 export async function tidyOutline(c: Ctx): Promise<TidyIssue[]> {
@@ -499,7 +500,7 @@ ${NO_REPEAT}
   }
   // 没拆场景、只有一段章大纲时，按整章大纲一次写完
   if (!r.ch.scenes.length) {
-    if (!r.ch.ol?.trim()) return out;
+    if (!olText(r.ch)) return out;
     onScene(0, "整章");
     const n = target || fillTarget(c, r);
     const res = await writeToTarget(

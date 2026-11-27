@@ -13,6 +13,7 @@ import { mentioned } from "../mention";
 import { archiveMap, ensureFresh } from "./archive";
 import { clip } from "../util";
 import { residentLimitOf, type MemPrefs } from "../hooks";
+import { olText } from "../chapterOutline";
 
 export type Ctx = WorkData & { work: Work };
 
@@ -50,7 +51,7 @@ export async function stablePrefix(c: Ctx, role: string, task: LimitTask = "pros
 /** 正在写的这一章在哪一卷、有哪些人物：按卷生效、「只管这些人」的限制据此筛选 */
 export function atOf(c: Pick<Ctx, "vols" | "chars">, r: ChRef | undefined): LimitAt | undefined {
   if (!r) return undefined;
-  const text = [r.ch.ol ?? "", ...r.ch.scenes.map((s) => [s.t, s.goal, s.conf, s.pov ?? "", ...s.who].join("\n"))].join("\n");
+  const text = [olText(r.ch), ...r.ch.scenes.map((s) => [s.t, s.goal, s.conf, s.pov ?? "", ...s.who].join("\n"))].join("\n");
   const names = new Set([...mentioned(c.chars, text), ...r.ch.scenes.flatMap((s) => [...s.who, s.pov ?? ""]).filter(Boolean)]);
   return { vol: c.vols[r.v]?.id, names: [...names] };
 }
@@ -152,7 +153,7 @@ export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: 
     const head = `第${x.no}章 ${x.ch.title || "（未命名）"}`;
     if (a?.summary) return `${head}：${a.summary}`;
     if (x.ch.summary) return `${head}：${x.ch.summary}`;
-    const ol = [x.ch.ol, x.ch.scenes.map((s) => s.t + (s.result ? "（" + s.result + "）" : "")).join("；")].filter(Boolean).join("｜");
+    const ol = [olText(x.ch), x.ch.scenes.map((s) => s.t + (s.result ? "（" + s.result + "）" : "")).join("；")].filter(Boolean).join("｜");
     if (t?.plain?.trim()) return `${head}（还没归档，只有大纲）：${ol || "（无大纲）"}`;
     return `${head}（还没写正文，按大纲）：${ol || "（无大纲）"}`;
   });
@@ -205,7 +206,7 @@ export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: 
 }
 
 export function outlineOf(_c: Ctx, r: ChRef): string {
-  const lines = [`第${r.no}章 ${r.ch.title || "（未命名）"}${r.ch.ol ? "｜本章大纲：" + r.ch.ol : ""}${r.ch.fn ? "｜本章作用：" + r.ch.fn : ""}${r.ch.hook ? "｜章末钩子：" + r.ch.hook : ""}`];
+  const lines = [`第${r.no}章 ${r.ch.title || "（未命名）"}${olText(r.ch) ? "｜本章大纲：" + olText(r.ch) : ""}${r.ch.fn ? "｜本章作用：" + r.ch.fn : ""}${r.ch.hook ? "｜章末钩子：" + r.ch.hook : ""}`];
   r.ch.scenes.forEach((s, i) => {
     const bits = [s.goal && "目标：" + s.goal, s.conf && "冲突：" + s.conf, s.turn && "转折：" + s.turn, s.result && "结果：" + s.result, s.who.length && "人物：" + s.who.join("、"), s.pov && "视角：" + s.pov, s.place && "地点：" + s.place, s.day != null && `故事时间：第${s.day}天${s.time ? " " + s.time : ""}`, s.plant && "埋伏笔：" + s.plant, s.pay && "收伏笔：" + s.pay, s.reveal && "信息揭示：" + s.reveal, (s.moodA || s.moodB) && `情绪：${s.moodA || "?"}→${s.moodB || "?"}`, s.pace && "节奏：" + s.pace, s.words && `约 ${s.words} 字`].filter(Boolean);
     lines.push(`场景${i + 1}「${s.t}」${bits.join("；")}`);

@@ -50,6 +50,8 @@ export interface Chapter {
   fn?: string;
   /** 本章大纲：这一章发生什么，几句话 */
   ol?: string;
+  /** 本章大纲按段编辑（ol 里每段写成「【段名】……」） */
+  olSeg?: boolean;
   w?: number | null;
   hook?: string;
   note?: string;
