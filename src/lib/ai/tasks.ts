@@ -8,7 +8,8 @@ import { allChapters, type ChRef } from "../outline";
 import { compileStyle, DIMS, leak, normDraft } from "../style";
 import { describe } from "../chars";
 import * as repo from "../repo";
-import { clip } from "../util";
+import { clip, countWords } from "../util";
+import { DEFAULT_CONT_LEN, lenSpec, writeToTarget } from "./length";
 import { getBible } from "../memory";
 
 const sys = (content: string): Msg => ({ role: "system", content });
@@ -401,7 +402,7 @@ ${NO_REPEAT}
 }
 
 export const SEL_OPS: Record<string, string> = {
-  续写: "从「原文」的最后一句接着往下写一段（150–300 字），衔接自然。只输出新写的部分，不要复述原文。",
+  续写: "从「原文」的最后一句接着往下写，衔接自然。只输出新写的部分，不要复述原文。",
   扩写: "把「原文」扩写到原来的一倍半到两倍：按原文的顺序，逐句保留原文的情节、人物、对白和关键句子，只在句子之间补动作、神态、细节和心理。不新增情节，不改变谁说了什么、做了什么。",
   缩写: "把「原文」压缩到原来的一半左右：按原文顺序保留关键情节、动作和对白，只删重复和可有可无的描写。",
   改写: "换一种写法重写「原文」，情节、人物、对白的意思和先后顺序都不变。",
@@ -421,14 +422,14 @@ export function noteLine(note?: string): string {
   return n ? `作者对这一次的要求（风格、走向等），优先照着做，但不能违反本书写作限制：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
 }
 
-function selPrompt(ctxText: string, op: string, sel: string, before: string, after: string, note?: string): string {
+function selPrompt(ctxText: string, op: string, sel: string, before: string, after: string, note?: string, len = DEFAULT_CONT_LEN): string {
   const cont = op === "续写";
   return `${ctxText}
 
 === ${cont ? "本章已经写好的正文" : "本章前文（仅供参考，不要写进结果）"} ===
 ${writtenSoFar(before)}
 ${after.trim() ? `\n=== 后文（仅供参考：已经写好的，${cont ? "续写不要写到它的情节里去，也不要重复" : "不要写进结果"}）===\n${after.slice(0, 800)}\n` : ""}
-任务：${SEL_OPS[op] ?? op}
+任务：${SEL_OPS[op] ?? op}${cont ? "这次写" + lenSpec(len) + "。" : ""}
 ${noteLine(note)}
 
 ${cont ? NO_REPEAT : KEEP_RULE}
@@ -438,20 +439,35 @@ ${sel}
 === 原文结束 ===`;
 }
 
-export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string, after = ""): Promise<string> {
+/** len：续写的目标字数，其它操作的长度由原文决定，不用 */
+export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel: string, before: string, onDelta: (t: string) => void, signal?: AbortSignal, note?: string, after = "", len = DEFAULT_CONT_LEN): Promise<string> {
   const ctx = r ? await chapterContext(c, r, { full: op === "续写" }) : { text: "" };
-  const res = await chat(
-    [
-      sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。", "prose", atOf(c, r))) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-      user(selPrompt(ctx.text, op, sel, before, after, note) + limitsReminder(c, "prose", atOf(c, r))),
-    ],
-    { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : op === "续写" ? 1.0 : 0.8 },
-  );
+  const msgs = [
+    sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。", "prose", atOf(c, r))) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
+    user(selPrompt(ctx.text, op, sel, before, after, note, len) + limitsReminder(c, "prose", atOf(c, r))),
+  ];
+  // 续写按目标字数控制：超了在句末停，太短补写一轮
+  if (op === "续写") return writeToTarget(msgs, len, { model: "write", onDelta, signal, temperature: 1.0, rounds: 1 });
+  const res = await chat(msgs, { model: "write", onDelta, signal, temperature: op === "润色" ? 0.6 : 0.8 });
   return res.content.trim();
 }
 
+/** 按大纲生成草稿默认写多少字：已有正文写「每章字数」减去已写（至少 500），拆了场景按场景预估字数加起来 */
+export function fillTarget(c: Pick<Ctx, "work">, r: ChRef, existing = ""): number {
+  const chap = c.work.chapWords || 3000;
+  const have = countWords(existing);
+  if (have > 0) return Math.max(500, chap - have);
+  if (!r.ch.scenes.length) return chap;
+  const per = Math.round(chap / r.ch.scenes.length);
+  return r.ch.scenes.reduce((a, s) => a + (s.words || per), 0);
+}
+
 /** 按大纲填充一章：逐个场景写，每个场景接着上一个 */
-export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: string) => void, onDelta: (t: string) => void, signal?: AbortSignal, existing = ""): Promise<string[]> {
+/**
+ * target：这次要写多少字，不传就用 fillTarget 算的默认值。
+ * 拆了场景时按各场景的预估字数按比例分；每次生成超了在句末停，不够自动补写。
+ */
+export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: string) => void, onDelta: (t: string) => void, signal?: AbortSignal, existing = "", target?: number): Promise<string[]> {
   const ctx = await chapterContext(c, r, { full: true, onStep: (s) => onScene(0, s + "（整理完再写）") });
   const at = atOf(c, r);
   const prefix = (await stablePrefix(c, "你是作者的代笔。按大纲写正文，直接输出正文段落，不加标题和说明。", "prose", at)) + "\n\n=== 文风 ===\n" + compileStyle(c.style) + "\n\n" + NATURAL;
@@ -459,8 +475,8 @@ export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: 
   // 本章已经有正文：从正文结尾接着写大纲里还没写到的部分，不从头再来
   if (existing.trim()) {
     onScene(0, "接着已有正文");
-    const left = Math.max(500, (c.work.chapWords || 3000) - existing.trim().length);
-    const res = await chat(
+    const left = target || fillTarget(c, r, existing);
+    const res = await writeToTarget(
       [
         sys(prefix),
         user(`${ctx.text}
@@ -473,18 +489,20 @@ ${writtenSoFar(existing)}
 
 ${NO_REPEAT}
 
-先对照本章大纲，找出已经写到哪里；然后从已有正文的最后一句接着往下写，只写大纲里还没写到的部分，约 ${left} 字，写到本章结束为止。如果大纲已经全部写完，就只写一小段收尾。${limitsReminder(c, "prose", at)}`),
+先对照本章大纲，找出已经写到哪里；然后从已有正文的最后一句接着往下写，只写大纲里还没写到的部分，写到本章结束为止。这次写${lenSpec(left)}。大纲写完了还不够字数，就把最后几个情节写细，不要编大纲以外的新情节。${limitsReminder(c, "prose", at)}`),
       ],
-      { model: "write", onDelta, signal, temperature: 1.0 },
+      left,
+      { model: "write", onDelta, signal, temperature: 1.0, onTopUp: (n) => onScene(0, `接着已有正文 · 字数不够，补写第 ${n} 次`) },
     );
-    out.push(res.content.trim());
+    out.push(res);
     return out;
   }
   // 没拆场景、只有一段章大纲时，按整章大纲一次写完
   if (!r.ch.scenes.length) {
     if (!r.ch.ol?.trim()) return out;
     onScene(0, "整章");
-    const res = await chat(
+    const n = target || fillTarget(c, r);
+    const res = await writeToTarget(
       [
         sys(prefix),
         user(`${ctx.text}
@@ -492,19 +510,25 @@ ${NO_REPEAT}
 本章大纲：
 ${outlineOf(c, r)}
 
-这是本章开头。按上面的本章大纲写完整一章，约 ${c.work.chapWords || 3000} 字。大纲里的情节都要写到，写到本章结束为止，不要写下一章。${limitsReminder(c, "prose", at)}`),
+这是本章开头。按上面的本章大纲写完整一章，${lenSpec(n)}。大纲里的情节都要写到，按字数安排每个情节的篇幅，写到本章结束为止，不要写下一章。${limitsReminder(c, "prose", at)}`),
       ],
-      { model: "write", onDelta, signal, temperature: 1.0 },
+      n,
+      { model: "write", onDelta, signal, temperature: 1.0, onTopUp: (k) => onScene(0, `整章 · 字数不够，补写第 ${k} 次`) },
     );
-    out.push(res.content.trim());
+    out.push(res);
     return out;
   }
   const per = Math.round((c.work.chapWords || 3000) / Math.max(1, r.ch.scenes.length));
+  const base = r.ch.scenes.map((s) => s.words || per);
+  const sum = base.reduce((a, b) => a + b, 0) || 1;
+  // 作者改了这次的总字数：各场景按原来的比例放大缩小
+  const scale = target ? target / sum : 1;
   for (let i = 0; i < r.ch.scenes.length; i++) {
     if (signal?.aborted) break;
     const s = r.ch.scenes[i];
     onScene(i, s.t);
-    const res = await chat(
+    const want = Math.max(100, Math.round(base[i] * scale));
+    const res = await writeToTarget(
       [
         sys(prefix),
         user(`${ctx.text}
@@ -514,11 +538,12 @@ ${outlineOf(c, r)}
 
 ${out.length ? "本章已经写好的正文：\n" + writtenSoFar(out.join("\n\n")) + "\n\n" + NO_REPEAT : "这是本章开头。"}
 
-现在只写场景${i + 1}「${s.t}」，约 ${s.words || per} 字。写到这个场景的结果为止，不要写下一个场景。${limitsReminder(c, "prose", at)}`),
+现在只写场景${i + 1}「${s.t}」，${lenSpec(want)}。写到这个场景的结果为止，不要写下一个场景。${limitsReminder(c, "prose", at)}`),
       ],
-      { model: "write", onDelta, signal, temperature: 1.0 },
+      want,
+      { model: "write", onDelta, signal, temperature: 1.0, rounds: 1, onTopUp: () => onScene(i, `${s.t} · 字数不够，补写`) },
     );
-    out.push(res.content.trim());
+    out.push(res);
     onDelta("\n\n");
   }
   return out;
