@@ -29,6 +29,7 @@ import { countIn, findInDoc, replaceInHtml, snippets, type Hit } from "../lib/fi
 import { isTauri } from "../lib/db";
 import { ExportPanel } from "./DataPanels";
 import * as T from "../lib/ai/tasks";
+import { CONT_LENS, DEFAULT_CONT_LEN, SHORT_RATIO } from "../lib/ai/length";
 import { errText } from "../lib/ai/client";
 import { atOf, type Ctx } from "../lib/ai/context";
 import { phaseName } from "../lib/plan";
@@ -88,8 +89,10 @@ type Panel =
   | { kind: "sugg"; loading: boolean; opts: { t: string; d: string }[]; err?: string }
   // noSel：续写时没选中文字（取的是光标所在段落作上下文），结果只能插进去，不能「替换选中」
   // orig：送去处理的原文，用来和结果对照、判断 AI 有没有改
-  | { kind: "sel"; op: string; noSel: boolean; orig: string; text: string; done: boolean; err?: string; note: string; skip: string[] }
-  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean }
+  // len：续写的目标字数
+  | { kind: "sel"; op: string; noSel: boolean; orig: string; text: string; done: boolean; err?: string; note: string; skip: string[]; len?: number }
+  // target：这次草稿的目标字数
+  | { kind: "fill"; scene: string; text: string; done: boolean; err?: string; cont?: boolean; target?: number }
   | { kind: "check"; loading: boolean; rule: ReturnType<typeof ruleCheck>; ai: T.OocIssue[]; cont: T.ContIssue[]; err?: string }
   | { kind: "hist"; list: repo.Version[]; sel: repo.VersionFull | null }
   | { kind: "find"; replace: boolean }
@@ -125,6 +128,10 @@ export default function Write() {
   const [plain, setPlain] = useState("");
   const [ai, setAi] = useState<[number, number]>([0, 0]);
   const [panel, setPanel] = useState<Panel>({ kind: "none" });
+  /** 续写长度（短中长），记住上次选的 */
+  const [contLen, setContLen] = useSetting<number>("contLen", DEFAULT_CONT_LEN);
+  /** 「按大纲生成草稿」这次写多少字；空着用默认值，切章清空 */
+  const [fillWords, setFillWords] = useState("");
   const abort = useRef<AbortController | null>(null);
   /** 编辑器里正在显示的是哪一章（切章读取期间仍是上一章，打的字存回上一章） */
   const loadedFor = useRef<string | null>(null);
@@ -143,6 +150,8 @@ export default function Write() {
     return chs.filter((r) => (n && r.no === n) || r.ch.title.includes(q));
   }, [chs, tocQ]);
   const cur = findChapter(vols, chapterId) ?? chs[0];
+  // 换了一章：这次写多少字回到默认
+  useEffect(() => setFillWords(""), [cur?.ch.id]);
 
   useEffect(() => {
     if (prefsReady) loadSavedFonts(prefs.fonts);
@@ -426,7 +435,7 @@ export default function Write() {
     toast("已插入。浅黄底是 AI 写的，你改过以后会变成虚线");
   }
 
-  async function selOp(op: string, note = "", range?: { from: number; to: number; noSel: boolean }, skip: string[] = []) {
+  async function selOp(op: string, note = "", range?: { from: number; to: number; noSel: boolean }, skip: string[] = [], len = contLen) {
     if (!editor || !cur) return;
     let { from, to } = range ?? editor.state.selection;
     let noSel = range?.noSel ?? false;
@@ -445,9 +454,9 @@ export default function Write() {
     abort.current = new AbortController();
     // 记下原文位置，之后正文的每次改动都会把它挪到对的地方
     editor.view.dispatch(markAiRange(editor.state, from, to));
-    setPanel({ kind: "sel", op, noSel, orig: sel, text: "", done: false, note, skip });
+    setPanel({ kind: "sel", op, noSel, orig: sel, text: "", done: false, note, skip, len: op === "续写" ? len : undefined });
     try {
-      await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to));
+      await T.selectionOp(ctx(skip), cur, op, sel, editor.state.doc.textBetween(0, from, "\n"), (d) => setPanel((p) => (p.kind === "sel" ? { ...p, text: p.text + d } : p)), abort.current.signal, note, after(to), len);
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "sel" ? { ...p, done: true, err: errText(e) } : p));
@@ -505,9 +514,11 @@ export default function Write() {
     abort.current = new AbortController();
     const existing = editor.getText({ blockSeparator: "\n" });
     const cont = !!existing.trim();
-    setPanel({ kind: "fill", scene: "", text: "", done: false, cont });
+    const typed = Math.round(+fillWords);
+    const target = typed >= 100 ? typed : T.fillTarget({ work }, cur, existing);
+    setPanel({ kind: "fill", scene: "", text: "", done: false, cont, target });
     try {
-      await T.fillChapter(ctx(), cur, (_i, t) => setPanel((p) => (p.kind === "fill" ? { ...p, scene: t } : p)), (d) => setPanel((p) => (p.kind === "fill" ? { ...p, text: p.text + d } : p)), abort.current.signal, existing);
+      await T.fillChapter(ctx(), cur, (_i, t) => setPanel((p) => (p.kind === "fill" ? { ...p, scene: t } : p)), (d) => setPanel((p) => (p.kind === "fill" ? { ...p, text: p.text + d } : p)), abort.current.signal, existing, target);
       setPanel((p) => (p.kind === "fill" ? { ...p, done: true } : p));
     } catch (e) {
       setPanel((p) => (p.kind === "fill" ? { ...p, done: true, err: errText(e) } : p));
@@ -527,6 +538,8 @@ export default function Write() {
     if (mode === "replace") chain.setContent(content as any, true).run();
     else chain.insertContentAt(editor.state.doc.content.size, content).run();
     setPanel({ kind: "none" });
+    // 已写字数变了，下次的默认字数跟着变，不沿用这次填的
+    setFillWords("");
     toast("草稿已进正文，浅黄底的都是 AI 写的");
   }
 
@@ -588,6 +601,7 @@ export default function Write() {
 
   const total = Object.values(words).reduce((a, b) => a + b, 0);
   const chWords = countWords(plain);
+  const fillDefault = cur ? T.fillTarget({ work }, cur, plain) : 0;
   const scanRows = scanOn ? scan(plain) : [];
   const limStats = scanOn ? scanLimits(plain, limits, scanOpts).stats : [];
   const limOn = limits.filter((l) => !l.off).length;
@@ -843,10 +857,12 @@ export default function Write() {
                   // 关掉菜单后把焦点和原来的选区还给正文
                   editor?.commands.focus(null, { scrollIntoView: false });
                 }}
-                run={(op, note, skip) => {
+                run={(op, note, skip, len) => {
                   setMenu(null);
-                  selOp(op, note, undefined, skip);
+                  if (len) setContLen(len);
+                  selOp(op, note, undefined, skip, len ?? contLen);
                 }}
+                len={contLen}
                 limits={limits}
                 ban={() => {
                   setMenu(null);
@@ -956,7 +972,7 @@ export default function Write() {
               // 按原文现在的位置重新生成；原文已被改动就让作者重新选
               const r = aiRangeNow(editor.state);
               if (!r) return void toast("原来选中的文字已经改动了，请重新选中再生成");
-              selOp(panel.op, note, { ...r, noSel: panel.noSel }, skip);
+              selOp(panel.op, note, { ...r, noSel: panel.noSel }, skip, panel.len ?? contLen);
             }} limits={limits} scanOpts={scanOpts} fix={fixPanel} checkLim={async (text) => (cur ? T.checkLimits(ctx(), cur, splitLimitNote(text).body) : [])} />
           )}
 
@@ -994,6 +1010,20 @@ export default function Write() {
             ) : (
               <Empty>{cur.ch.ol?.trim() ? "这一章还没拆场景，生成草稿会按上面的本章大纲整章写。想分场景写，到「大纲」页拆场景。" : "这一章还没有场景。到「大纲」页拆场景后，这里会列出来。"}</Empty>
             )}
+            <label className="fill-len">
+              这次写约
+              <input
+                type="number"
+                min={100}
+                step={100}
+                value={fillWords}
+                placeholder={String(fillDefault)}
+                aria-label="这次生成多少字，空着用默认值"
+                onChange={(e) => setFillWords(e.target.value)}
+              />
+              字
+              <small>{chWords ? `本章已写 ${chWords} 字，接着写` : cur.ch.scenes.length ? "按场景预估字数分配" : "默认是「风格与限制」里的每章字数"}</small>
+            </label>
             <div className="addrow">
               <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length && !cur.ch.ol?.trim()}>
                 按大纲生成草稿
@@ -1153,6 +1183,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           {close}
         </h3>
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} skip={panel.skip} empty={panel.done ? "" : "正在写……"} onFix={fix} onExcept={addExcept} />
+        {panel.len && <LenMeter text={panel.text} target={panel.len} done={panel.done} />}
         {panel.err && <p className="lint bad">{panel.err}</p>}
         {panel.done && !panel.err && !splitLimitNote(panel.text).body.trim() && <Empty>AI 这次没有写出内容，可以重新生成。</Empty>}
         {ch && ch.same && (
@@ -1195,6 +1226,7 @@ function AiPanel({ panel, setPanel, insertInline, applySel, applyFill, addChange
           {close}
         </h3>
         <AiResult text={panel.text} done={panel.done && !panel.err} limits={limits} opts={scanOpts} empty={panel.done ? "" : "正在组装上下文……"} onFix={fix} onExcept={addExcept} />
+        <LenMeter text={panel.text} target={panel.target} done={panel.done} />
         {panel.err && <p className="lint bad">{panel.err}</p>}
         {panel.done && panel.text && limits.some((l) => !l.off) && <LimCheckBtn text={panel.text} run={checkLim} />}
         <div className="addrow">
@@ -1328,8 +1360,22 @@ function TocMenu({ at, close, add }: { at: { x: number; y: number }; close: () =
   );
 }
 
-function SelMenu({ at, close, run, copy, next, ban, limits }: { at: { x: number; y: number; sel: boolean }; close: () => void; run: (op: string, note: string, skip: string[]) => void; copy: (cut: boolean) => void; next: () => void; ban: () => void; limits: WriteLimit[] }) {
+/** 草稿区的字数：已生成多少 / 目标多少；写完差得多时说一声 */
+function LenMeter({ text, target, done }: { text: string; target?: number; done: boolean }) {
+  if (!target || !text.trim()) return null;
+  const n = countWords(splitLimitNote(text).body);
+  const short = done && n < target * SHORT_RATIO;
+  return (
+    <p className={"len-meter" + (short ? " warn" : "")}>
+      {done ? "共" : "已生成"} {n.toLocaleString()} 字 / 目标约 {target.toLocaleString()} 字
+      {short ? "。补写后仍然偏短，多半是大纲内容不够展开，可以在大纲里多写几个情节" : ""}
+    </p>
+  );
+}
+
+function SelMenu({ at, close, run, copy, next, ban, limits, len: len0 }: { at: { x: number; y: number; sel: boolean }; close: () => void; run: (op: string, note: string, skip: string[], len?: number) => void; copy: (cut: boolean) => void; next: () => void; ban: () => void; limits: WriteLimit[]; len: number }) {
   const [note, setNote] = useState("");
+  const [len, setLen] = useState(len0);
   const [skip, setSkip] = useState<string[]>([]);
   useEffect(() => {
     const off = () => close();
@@ -1361,10 +1407,19 @@ function SelMenu({ at, close, run, copy, next, ban, limits }: { at: { x: number;
         {Object.keys(T.SEL_OPS)
           .filter((k) => at.sel || k === "续写")
           .map((k) => (
-            <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note, skip)}>
+            <button key={k} type="button" role="menuitem" title={T.SEL_OPS[k]} onClick={() => run(k, note, skip, k === "续写" ? len : undefined)}>
               {k}
+              {k === "续写" && <kbd>约 {len} 字</kbd>}
             </button>
           ))}
+        <div className="ctx-len" role="group" aria-label="续写长度">
+          续写长度
+          {CONT_LENS.map((o) => (
+            <button key={o.k} type="button" className={len === o.n ? "on" : ""} aria-pressed={len === o.n} title={`约 ${o.n} 字`} onClick={() => setLen(o.n)}>
+              {o.k}
+            </button>
+          ))}
+        </div>
         {!at.sel && (
           <button type="button" role="menuitem" onClick={next}>
             接下来怎么写 <kbd>Ctrl+Enter</kbd>
