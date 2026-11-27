@@ -13,6 +13,7 @@ import { DEFAULT_CONT_LEN, lenSpec, writeToTarget } from "./length";
 import { getBible } from "../memory";
 import { olText } from "../chapterOutline";
 import { arr, eventType, lv, names, num, obj, str } from "./norm";
+import { focusBlock, focusHint, focusTail, sceneWords } from "../focus";
 
 const sys = (content: string): Msg => ({ role: "system", content });
 const user = (content: string): Msg => ({ role: "user", content });
@@ -223,22 +224,22 @@ export interface ChangeOut {
 
 export async function splitScenes(c: Ctx, sentence: string, r: ChRef): Promise<Scene[]> {
   const prior = await priorStory(c, r.no, { ensure: true });
-  const res = await chatJson<{ scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string }[] }>(
+  const res = await chatJson<{ scenes: { t: string; goal: string; conf: string; who: string[]; plant?: string; pay?: string; key?: boolean }[] }>(
     [
       sys(await stablePrefix(c, "你是小说大纲助手。只给结构，不写正文和对白。", "plan")),
       user(`${prior.text ? prior.text + "\n\n" : ""}把这一句拆成 2–4 个场景，放进第${r.no}章。
 一句话：${sentence}
 
 本章现有大纲：
-${outlineOf(c, r)}
+${outlineOf(c, r)}${focusBlock(r.ch) ? "\n\n" + focusBlock(r.ch) : ""}${r.ch.focus?.trim() ? "\n写作重点落在的部分可以多拆一个场景，这些场景的 key 填 true，其余填 false。" : ""}
 
 每个场景给标题、目标、冲突、出场人物；如果顺带埋或收伏笔就写上。不要写具体对白和描写。${prior.text ? "\n第一个场景要从上一章结束时的局面接着开始，出场人物要包括上一章结尾还和主角在一起的人（除非这一句明确写了他们离开）。" : ""}
-返回 JSON：{"scenes":[{"t":"","goal":"","conf":"","who":[""],"plant":"","pay":""}]}${limitsReminder(c, "plan")}`),
+返回 JSON：{"scenes":[{"t":"","goal":"","conf":"","who":[""],"plant":"","pay":""${r.ch.focus?.trim() ? ',"key":false' : ""}}]}${limitsReminder(c, "plan")}`),
     ],
     { temperature: 1.0 },
   );
   // 模型常把 who 返回成「林舟、苏晚」这样的字符串，规整成数组
-  return arr(obj(res).scenes).map((x) => obj(x)).map((s) => ({ id: "", t: str(s.t) || "场景", goal: str(s.goal), conf: str(s.conf), who: names(s.who), plant: str(s.plant), pay: str(s.pay), ai: true }));
+  return arr(obj(res).scenes).map((x) => obj(x)).map((s) => ({ id: "", t: str(s.t) || "场景", goal: str(s.goal), conf: str(s.conf), who: names(s.who), plant: str(s.plant), pay: str(s.pay), ...(s.key === true && r.ch.focus?.trim() ? { key: true } : {}), ai: true }));
 }
 
 export interface SplitChapter {
@@ -472,7 +473,7 @@ export async function suggestNext(c: Ctx, r: ChRef, before: string, after = ""):
       user(`${ctx.text}
 
 本章大纲：
-${outlineOf(c, r)}
+${outlineOf(c, r)}${focusHint(r.ch)}
 
 本章已经写好的正文（光标前）：
 ${writtenSoFar(before)}
@@ -512,10 +513,13 @@ export function noteLine(note?: string): string {
   return n ? `作者对这一次的要求（风格、走向等），优先照着做，但不能违反本书写作限制：${n}` : "作者没有额外要求：按前文、本章大纲和人物设定自然地写。";
 }
 
-function selPrompt(ctxText: string, op: string, sel: string, before: string, after: string, note?: string, len = DEFAULT_CONT_LEN): string {
+/** 续写、扩写会多写内容，带上本章写作重点；缩写、润色这类忠于原文的操作不带 */
+export const FOCUS_OPS = new Set(["续写", "扩写"]);
+
+function selPrompt(ctxText: string, op: string, sel: string, before: string, after: string, note?: string, focus = "", len = DEFAULT_CONT_LEN): string {
   const cont = op === "续写";
   return `${ctxText}
-
+${focus ? "\n" + focus + "\n" : ""}
 === ${cont ? "本章已经写好的正文" : "本章前文（仅供参考，不要写进结果）"} ===
 ${writtenSoFar(before)}
 ${after.trim() ? `\n=== 后文（仅供参考：已经写好的，${cont ? "续写不要写到它的情节里去，也不要重复" : "不要写进结果"}）===\n${after.slice(0, 800)}\n` : ""}
@@ -534,7 +538,7 @@ export async function selectionOp(c: Ctx, r: ChRef | undefined, op: string, sel:
   const ctx = r ? await chapterContext(c, r, { full: op === "续写", signal, text: before + "\n" + sel }) : { text: "" };
   const msgs = [
     sys((await stablePrefix(c, "你是作者的写作搭子。直接输出正文，不加任何说明、引号或标题。", "prose", atOf(c, r))) + "\n\n" + compileStyle(c.style) + "\n\n" + NATURAL),
-    user(selPrompt(ctx.text, op, sel, before, after, note, len) + limitsReminder(c, "prose", atOf(c, r))),
+    user(selPrompt(ctx.text, op, sel, before, after, note, r && FOCUS_OPS.has(op) ? focusBlock(r.ch) : "", len) + (r && FOCUS_OPS.has(op) ? focusTail(r.ch) : "") + limitsReminder(c, "prose", atOf(c, r))),
   ];
   // 续写按目标字数控制：超了在句末停，太短补写一轮
   if (op === "续写") return writeToTarget(msgs, len, { model: "write", onDelta, signal, temperature: 1.0, rounds: 1 });
@@ -562,6 +566,8 @@ export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: 
   const at = atOf(c, r);
   const prefix = (await stablePrefix(c, "你是作者的代笔。按大纲写正文，直接输出正文段落，不加标题和说明。", "prose", at)) + "\n\n=== 文风 ===\n" + compileStyle(c.style) + "\n\n" + NATURAL;
   const out: string[] = [];
+  const f = focusBlock(r.ch);
+  const fb = f ? "\n\n" + f : "";
   // 本章已经有正文：从正文结尾接着写大纲里还没写到的部分，不从头再来
   if (existing.trim()) {
     onScene(0, "接着已有正文");
@@ -572,14 +578,14 @@ export async function fillChapter(c: Ctx, r: ChRef, onScene: (i: number, title: 
         user(`${ctx.text}
 
 本章大纲：
-${outlineOf(c, r)}
+${outlineOf(c, r)}${fb}
 
 本章已经写好的正文：
 ${writtenSoFar(existing)}
 
 ${NO_REPEAT}
 
-先对照本章大纲，找出已经写到哪里；然后从已有正文的最后一句接着往下写，只写大纲里还没写到的部分，写到本章结束为止。这次写${lenSpec(left)}。大纲写完了还不够字数，就把最后几个情节写细，不要编大纲以外的新情节。${limitsReminder(c, "prose", at)}`),
+先对照本章大纲，找出已经写到哪里；然后从已有正文的最后一句接着往下写，只写大纲里还没写到的部分，写到本章结束为止。这次写${lenSpec(left)}。大纲写完了还不够字数，就把最后几个情节写细，不要编大纲以外的新情节。${focusTail(r.ch)}${limitsReminder(c, "prose", at)}`),
       ],
       left,
       { model: "write", onDelta, signal, temperature: 1.0, onTopUp: (n) => onScene(0, `接着已有正文 · 字数不够，补写第 ${n} 次`) },
@@ -598,9 +604,9 @@ ${NO_REPEAT}
         user(`${ctx.text}
 
 本章大纲：
-${outlineOf(c, r)}
+${outlineOf(c, r)}${fb}
 
-这是本章开头。按上面的本章大纲写完整一章，${lenSpec(n)}。大纲里的情节都要写到，按字数安排每个情节的篇幅，写到本章结束为止，不要写下一章。${limitsReminder(c, "prose", at)}`),
+这是本章开头。按上面的本章大纲写完整一章，${lenSpec(n)}。大纲里的情节都要写到，按字数安排每个情节的篇幅，写到本章结束为止，不要写下一章。${focusTail(r.ch)}${limitsReminder(c, "prose", at)}`),
       ],
       n,
       { model: "write", onDelta, signal, temperature: 1.0, onTopUp: (k) => onScene(0, `整章 · 字数不够，补写第 ${k} 次`) },
@@ -608,10 +614,9 @@ ${outlineOf(c, r)}
     out.push(res);
     return out;
   }
-  const per = Math.round((c.work.chapWords || 3000) / Math.max(1, r.ch.scenes.length));
-  const base = r.ch.scenes.map((s) => s.words || per);
+  const base = sceneWords(r.ch.scenes, c.work.chapWords || 3000);
   const sum = base.reduce((a, b) => a + b, 0) || 1;
-  // 作者改了这次的总字数：各场景按原来的比例放大缩小
+  // 作者改了这次的总字数：各场景按原来的比例放大缩小（重点场景本来分得多，放缩后仍然多）
   const scale = target ? target / sum : 1;
   for (let i = 0; i < r.ch.scenes.length; i++) {
     if (signal?.aborted) break;
@@ -624,11 +629,11 @@ ${outlineOf(c, r)}
         user(`${ctx.text}
 
 本章大纲：
-${outlineOf(c, r)}
+${outlineOf(c, r)}${fb}
 
 ${out.length ? "本章已经写好的正文：\n" + writtenSoFar(out.join("\n\n")) + "\n\n" + NO_REPEAT : "这是本章开头。"}
 
-现在只写场景${i + 1}「${s.t}」，${lenSpec(want)}。写到这个场景的结果为止，不要写下一个场景。${limitsReminder(c, "prose", at)}`),
+现在只写场景${i + 1}「${s.t}」，${lenSpec(want)}。${s.key ? "这是本章的重点场景，按上面的写作重点写足过程和细节。" : ""}写到这个场景的结果为止，不要写下一个场景。${focusTail(r.ch)}${limitsReminder(c, "prose", at)}`),
       ],
       want,
       { model: "write", onDelta, signal, temperature: 1.0, rounds: 1, onTopUp: () => onScene(i, `${s.t} · 字数不够，补写`) },

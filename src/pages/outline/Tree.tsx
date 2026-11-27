@@ -16,6 +16,7 @@ import * as repo from "../../lib/repo";
 import * as arc from "../../lib/ai/archive";
 import { olText } from "../../lib/chapterOutline";
 import { OlEditor, OlExpand, OlModeSwitch, OlView } from "../../components/OlEditor";
+import { FocusField } from "../../components/FocusField";
 
 /** 选中的章和场景（场景序号 -1 表示只选了章） */
 export interface Sel {
@@ -345,7 +346,14 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                                 ⋮⋮
                               </span>
                               <span className="sct">
-                                {s.t}
+                                {s.key ? (
+                                  <span>
+                                    <span className="key-star" title="重点场景">★</span>
+                                    {s.t}
+                                  </span>
+                                ) : (
+                                  s.t
+                                )}
                                 {!D && s.day != null && <small>{dayLabel(s.day)}</small>}
                                 {D && (
                                   <small>
@@ -574,6 +582,9 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
             <div className="hint">这一章发生什么，写多写少都行。写正文时 AI 会照着它来</div>
           </div>
           {bigOl && <OlExpand no={r.no} title={r.ch.title} ch={r.ch} scenes={r.ch.scenes} onChange={setOlAll} close={() => setBigOl(false)} />}
+          <Field label="写作重点" hint="这一章想多写什么、怎么写。大纲管发生什么，这里管笔墨往哪里放；生成草稿、续写、扩写时 AI 会照着它分配篇幅">
+            <FocusField value={r.ch.focus ?? ""} onChange={(v) => setCh("focus", v)} />
+          </Field>
           <Field label="状态">
             <select value={r.ch.status} onChange={(e) => setCh("status", e.target.value)} aria-label="状态">
               {ST.map((x) => <option key={x}>{x}</option>)}
@@ -618,6 +629,12 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
         <>
           <h3>场景卡 · 第{r.no}章</h3>
           <Field label="标题"><input className="t" value={s.t} onChange={(e) => setSc("t", e.target.value)} aria-label="标题" /></Field>
+          <Field label="重点场景" hint="本章写作重点落在这一场。按场景生成草稿时，这一场分到的字数是普通场景的两倍">
+            <label>
+              <input type="checkbox" checked={!!s.key} onChange={(e) => setSc("key", e.target.checked || undefined)} />
+              这是本章的重头戏
+            </label>
+          </Field>
           {(["goal", "conf", "plant", "pay"] as const).map((k) => (
             <Field key={k} label={{ goal: "目标", conf: "冲突", plant: "埋伏笔", pay: "收伏笔" }[k]}>
               <textarea rows={2} value={s[k] ?? ""} onChange={(e) => setSc(k, e.target.value)} />

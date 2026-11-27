@@ -35,6 +35,8 @@ export interface Scene {
   words?: number | null;
   st?: string;
   note?: string;
+  /** 重点场景：本章写作重点落在这一场，按场景写草稿时分到两份字数 */
+  key?: boolean;
   /** 关联的时间线事件 */
   ev?: Id;
   /** 从哪里导入的，例如「时间线」 */
@@ -52,6 +54,8 @@ export interface Chapter {
   ol?: string;
   /** 本章大纲按段编辑（ol 里每段写成「【段名】……」） */
   olSeg?: boolean;
+  /** 本章写作重点：作者想让 AI 多写什么、怎么写，例如「战斗场面写细」 */
+  focus?: string;
   w?: number | null;
   hook?: string;
   note?: string;
