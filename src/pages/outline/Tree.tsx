@@ -14,6 +14,8 @@ import { ctx, names } from "./ctx";
 import { trashChapter, trashScene } from "../../lib/trash";
 import * as repo from "../../lib/repo";
 import * as arc from "../../lib/ai/archive";
+import { olText } from "../../lib/chapterOutline";
+import { OlEditor, OlExpand, OlModeSwitch, OlView } from "../../components/OlEditor";
 
 /** 选中的章和场景（场景序号 -1 表示只选了章） */
 export interface Sel {
@@ -49,7 +51,7 @@ export function TreeActions({ mode, setMode, say, onSync, sel, setSel }: { mode:
 
 async function tidy(say: Say, setSel: (s: Sel) => void) {
   const vs = useStore.getState().vols;
-  const empty = !vs.some((v) => v.outline?.trim() || v.chapters.some((c) => c.title.trim() || c.ol?.trim() || c.scenes.length));
+  const empty = !vs.some((v) => v.outline?.trim() || v.chapters.some((c) => c.title.trim() || olText(c) || c.scenes.length));
   if (empty) return say(<Empty>大纲还是空的，没什么可检查的。先点卷名旁的「卷大纲」写这一卷的走向，或者给几章写上本章大纲，再来检查断线、伏笔和节奏。</Empty>);
   say(<Empty>正在读全书大纲，找断线、没收的伏笔和节奏问题……</Empty>);
   try {
@@ -170,7 +172,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                   useStore.getState().aiEdit(`拆场景：${split.slice(0, 12)}`, ["vols", "events"], (d) => {
                     const ch = d.vols[cur.v].chapters[cur.c];
                     // 这句话就是本章大纲，本章还没写大纲时顺手存进去
-                    if (!ch.ol?.trim()) ch.ol = split.trim();
+                    if (!olText(ch)) ch.ol = split.trim();
                     const add = scenes.map((s) => ({ ...s, id: uid("s") }));
                     ch.scenes.push(...add);
                     const r = allChapters(d.vols as any).find((x) => x.ch.id === ch.id)!;
@@ -274,7 +276,7 @@ export function Tree({ mode, say, sel, setSel, goEvent }: { mode: "simple" | "de
                           {r.ch.status} · {r.ch.scenes.length} 场{D && r.ch.w ? ` · ${r.ch.w} 字` : ""}
                         </span>
                       </div>
-                      {r.ch.ol?.trim() && <div className="fn">{r.ch.ol.trim().slice(0, 60)}{r.ch.ol.trim().length > 60 ? "……" : ""}</div>}
+                      {olText(r.ch) && <div className="fn">{olText(r.ch).slice(0, 60)}{olText(r.ch).length > 60 ? "……" : ""}</div>}
                       {D && r.ch.fn && <div className="fn">作用：{r.ch.fn}</div>}
                       {r.ch.scenes.length > 0 && !fold[r.ch.id] && (
                         <ul className="scs">
@@ -378,6 +380,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const edit = useStore((s) => s.edit);
   const editMany = useStore((s) => s.editMany);
   const openChapter = useStore((s) => s.openChapter);
+  const [bigOl, setBigOl] = useState(false);
   const vi = sel.vol ? vols.findIndex((v) => v.id === sel.vol) : -1;
   if (vi >= 0) return <VolCard key={vols[vi].id} vi={vi} setSel={setSel} say={say} />;
   const r = allChapters(vols).find((x) => x.ch.id === sel.ch);
@@ -386,6 +389,13 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
   const D = mode === "detail";
   const nm = chars.map((c) => c.name).filter(Boolean);
   const setCh = (k: string, v: any) => edit("vols", (d) => void ((d[r.v].chapters[r.c] as any)[k] = v));
+  const setOlAll = (ol: string, seg: boolean) =>
+    edit("vols", (d) => {
+      const c = d[r.v].chapters[r.c];
+      c.ol = ol;
+      if (seg) c.olSeg = true;
+      else delete c.olSeg;
+    });
   const setSc = (k: keyof Scene, v: any) =>
     editMany(["vols", "events"], (d) => {
       const sc = d.vols[r.v].chapters[r.c].scenes[sel.s] as any;
@@ -429,9 +439,18 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
           <Field label="章名">
             <input className="t" value={r.ch.title} onChange={(e) => setCh("title", e.target.value)} aria-label="章名" />
           </Field>
-          <Field label="本章大纲" hint="这一章发生什么，几句话就够。写正文时 AI 会照着它来">
-            <textarea rows={3} value={r.ch.ol ?? ""} placeholder="例如：主角夜探档案室，发现父亲的名字被涂掉；被管理员撞见，只好编了个谎" onChange={(e) => setCh("ol", e.target.value)} />
-          </Field>
+          <div className="fld-ol">
+            <div className="fld-ol-h">
+              <span>本章大纲</span>
+              <OlModeSwitch ch={r.ch} onChange={setOlAll} />
+              <button type="button" className="linkish" title="打开大窗口写本章大纲，旁边列出本章场景" onClick={() => setBigOl(true)}>
+                展开编辑
+              </button>
+            </div>
+            <OlEditor ch={r.ch} onChange={setOlAll} />
+            <div className="hint">这一章发生什么，写多写少都行。写正文时 AI 会照着它来</div>
+          </div>
+          {bigOl && <OlExpand no={r.no} title={r.ch.title} ch={r.ch} scenes={r.ch.scenes} onChange={setOlAll} close={() => setBigOl(false)} />}
           <Field label="状态">
             <select value={r.ch.status} onChange={(e) => setCh("status", e.target.value)} aria-label="状态">
               {ST.map((x) => <option key={x}>{x}</option>)}
@@ -496,7 +515,7 @@ function Det({ mode, sel, setSel, say, goEvent }: { mode: "simple" | "detail"; s
                   type="button"
                   title="按本场景的标题、目标、冲突等文字里出现的人名和别名勾选；写大纲时也会自动勾上新提到的人"
                   onClick={() => {
-                    const add = mentioned(chars, sceneText(s) + "\n" + (r.ch.scenes.length === 1 ? r.ch.ol ?? "" : "")).filter((n) => !s.who.includes(n));
+                    const add = mentioned(chars, sceneText(s) + "\n" + (r.ch.scenes.length === 1 ? olText(r.ch) : "")).filter((n) => !s.who.includes(n));
                     if (!add.length) return toast("大纲里没认出新的人物");
                     setSc("who", [...s.who, ...add]);
                     toast(`已勾上：${add.join("、")}`);
@@ -708,7 +727,14 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
               <input value={r.ch.title} placeholder="章名" aria-label={`第${r.no}章章名`} onChange={(e) => setOl(r.c, "title", e.target.value)} />
               <small>{r.ch.scenes.length} 场</small>
             </div>
-            <textarea rows={2} value={r.ch.ol ?? ""} placeholder="这一章发生什么" aria-label={`第${r.no}章大纲`} onChange={(e) => setOl(r.c, "ol", e.target.value)} />
+            {r.ch.olSeg ? (
+              <div className="vol-ch-seg" onClick={() => setSel({ ch: r.ch.id, s: -1 })} title="分段写的章纲，点开章卡编辑">
+                <OlView ch={r.ch} />
+                {!olText(r.ch) && <span className="muted">（分段章纲，还没写，点开章卡编辑）</span>}
+              </div>
+            ) : (
+              <textarea rows={2} value={r.ch.ol ?? ""} placeholder="这一章发生什么" aria-label={`第${r.no}章大纲`} onChange={(e) => setOl(r.c, "ol", e.target.value)} />
+            )}
           </div>
         ))}
       </div>
@@ -756,7 +782,7 @@ function VolCard({ vi, setSel, say }: { vi: number; setSel: (s: Sel) => void; sa
                 // 先填这一卷里完全空着的章（没章名、没大纲、没场景、没正文），比如新书自带的第一章
                 const blank: string[] = [];
                 for (const c of v.chapters) {
-                  if (c.title.trim() || c.ol?.trim() || c.scenes.length) continue;
+                  if (c.title.trim() || olText(c) || c.scenes.length) continue;
                   const t = await repo.loadText(c.id);
                   if (!t?.words) blank.push(c.id);
                 }

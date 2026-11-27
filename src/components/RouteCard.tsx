@@ -1,6 +1,7 @@
 // 新手路线卡：从梗概到正文的六步，每步能跳过去，做完自动打勾，可以关掉。
 import { useStore } from "../lib/store";
 import { useSetting } from "../lib/hooks";
+import { olText } from "../lib/chapterOutline";
 
 export interface RouteStep {
   t: string;
@@ -16,7 +17,7 @@ export function routeSteps(go: RouteGo): RouteStep[] {
   return [
     { t: "写全书梗概", done: !!s.work?.intro?.trim(), go: go.intro },
     { t: "建卷，写卷大纲", done: s.vols.some((v) => v.outline?.trim()), go: go.vol },
-    { t: "拆成逐章大纲", done: chs.filter((c) => c.ol?.trim() || c.title.trim()).length >= 2, go: go.chs },
+    { t: "拆成逐章大纲", done: chs.filter((c) => olText(c) || c.title.trim()).length >= 2, go: go.chs },
     { t: "把一章拆成场景", done: chs.some((c) => c.scenes.length), go: go.scenes },
     { t: "同步到时间线", done: s.events.length > 0, go: go.sync },
     { t: "开始写正文", done: chs.some((c) => c.status !== "大纲"), go: go.write },

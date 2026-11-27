@@ -34,6 +34,8 @@ import { errText } from "../lib/ai/client";
 import { atOf, type Ctx } from "../lib/ai/context";
 import { phaseName } from "../lib/plan";
 import * as arc from "../lib/ai/archive";
+import { olText } from "../lib/chapterOutline";
+import { OlView } from "../components/OlEditor";
 
 /** skip：这一次暂时关掉的写作限制 */
 function ctx(skip: string[] = []): Ctx {
@@ -506,7 +508,7 @@ export default function Write() {
 
   async function fill() {
     if (!editor || !cur) return;
-    if (!cur.ch.scenes.length && !cur.ch.ol?.trim()) {
+    if (!cur.ch.scenes.length && !olText(cur.ch)) {
       toast("这一章还没有大纲，先到大纲页写本章大纲或拆场景");
       return;
     }
@@ -607,7 +609,7 @@ export default function Write() {
   const limOn = limits.filter((l) => !l.off).length;
   const rhythm = sentenceLengths(plain).slice(-80);
   const maxR = Math.max(10, ...rhythm);
-  const olWho = mentioned(chars, plain + "\n" + (cur.ch.ol ?? ""));
+  const olWho = mentioned(chars, plain + "\n" + olText(cur.ch));
   const people = chars.filter((c) => c.name && (olWho.includes(c.name.trim()) || cur.ch.scenes.some((s) => s.who.includes(c.name))));
   const open = plants(vols, events).filter((p) => p.plantNo && !p.payNo && p.plantNo <= cur.no);
   const aiTotal = ai[0] + ai[1];
@@ -991,7 +993,7 @@ export default function Write() {
                 在大纲中编辑
               </button>
             </h3>
-            {cur.ch.ol?.trim() && <p className="ch-ol">{cur.ch.ol}</p>}
+            {olText(cur.ch) && <OlView ch={cur.ch} />}
             {cur.ch.scenes.length ? (
               <ol className="scene-list">
                 {cur.ch.scenes.map((s) => (
@@ -1008,7 +1010,7 @@ export default function Write() {
                 ))}
               </ol>
             ) : (
-              <Empty>{cur.ch.ol?.trim() ? "这一章还没拆场景，生成草稿会按上面的本章大纲整章写。想分场景写，到「大纲」页拆场景。" : "这一章还没有场景。到「大纲」页拆场景后，这里会列出来。"}</Empty>
+              <Empty>{olText(cur.ch) ? "这一章还没拆场景，生成草稿会按上面的本章大纲整章写。想分场景写，到「大纲」页拆场景。" : "这一章还没有场景。到「大纲」页拆场景后，这里会列出来。"}</Empty>
             )}
             <label className="fill-len">
               这次写约
@@ -1025,7 +1027,7 @@ export default function Write() {
               <small>{chWords ? `本章已写 ${chWords} 字，接着写` : cur.ch.scenes.length ? "按场景预估字数分配" : "默认是「风格与限制」里的每章字数"}</small>
             </label>
             <div className="addrow">
-              <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length && !cur.ch.ol?.trim()}>
+              <button className="btn primary" type="button" onClick={fill} disabled={!cur.ch.scenes.length && !olText(cur.ch)}>
                 按大纲生成草稿
               </button>
               <button className="btn" type="button" onClick={check} title="人物、设定、时间线、前文、伏笔、禁用清单">
@@ -1339,8 +1341,13 @@ function LimCheckBtn({ text, run }: { text: string; run: (t: string) => Promise<
 }
 
 function TocMenu({ at, close, add }: { at: { x: number; y: number }; close: () => void; add: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const off = () => close();
+    // 只在页面或正文滚动时关菜单；菜单里的输入框字多了自己会横向/纵向滚动，不能算
+    const off = (e: Event) => {
+      if (e.type === "scroll" && box.current && e.target instanceof Node && box.current.contains(e.target)) return;
+      close();
+    };
     window.addEventListener("scroll", off, true);
     window.addEventListener("resize", off);
     return () => {
@@ -1351,7 +1358,7 @@ function TocMenu({ at, close, add }: { at: { x: number; y: number }; close: () =
   return (
     <>
       <div className="ctx-mask" onMouseDown={(e) => { e.preventDefault(); close(); }} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-      <div className="ctx-menu" role="menu" aria-label="章节操作" style={{ left: at.x, top: at.y }} onKeyDown={(e) => e.key === "Escape" && close()}>
+      <div ref={box} className="ctx-menu" role="menu" aria-label="章节操作" style={{ left: at.x, top: at.y }} onKeyDown={(e) => e.key === "Escape" && close()}>
         <button type="button" role="menuitem" autoFocus onClick={add}>
           在这一章后加一章
         </button>
@@ -1377,8 +1384,13 @@ function SelMenu({ at, close, run, copy, next, ban, limits, len: len0 }: { at: {
   const [note, setNote] = useState("");
   const [len, setLen] = useState(len0);
   const [skip, setSkip] = useState<string[]>([]);
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const off = () => close();
+    // 只在页面或正文滚动时关菜单；菜单里的输入框字多了自己会横向/纵向滚动，不能算
+    const off = (e: Event) => {
+      if (e.type === "scroll" && box.current && e.target instanceof Node && box.current.contains(e.target)) return;
+      close();
+    };
     window.addEventListener("scroll", off, true);
     window.addEventListener("resize", off);
     return () => {
@@ -1389,10 +1401,11 @@ function SelMenu({ at, close, run, copy, next, ban, limits, len: len0 }: { at: {
   return (
     <>
       <div className="ctx-mask" onMouseDown={(e) => { e.preventDefault(); close(); }} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-      <div className="ctx-menu" role="menu" aria-label="AI 处理选中的文字" style={{ left: at.x, top: at.y }}>
+      <div ref={box} className="ctx-menu" role="menu" aria-label="AI 处理选中的文字" style={{ left: at.x, top: at.y }}>
         <div className="ctx-h">{at.sel ? "AI 处理选中的文字" : "AI 接着写"}</div>
-        <input
+        <textarea
           className="ctx-note"
+          rows={1}
           value={note}
           autoFocus
           placeholder="要求（可选）：如 节奏放慢、多写心理、转向冲突"

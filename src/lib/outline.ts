@@ -2,6 +2,7 @@ import type { Arc, Chapter, Character, Scene, StoryEvent, Volume } from "./types
 import { mentioned } from "./mention";
 import { uid } from "./util";
 import { phaseName, where, bookLen } from "./plan";
+import { olText } from "./chapterOutline";
 
 export interface ChRef {
   ch: Chapter;
@@ -95,7 +96,7 @@ export function dayGuess(vols: Volume[], r: ChRef): { day: number; sure: boolean
 
 /** 没有场景的章，用章名和本章大纲在时间线上记一条事件 */
 export function chapterToEvent(vols: Volume[], events: StoryEvent[], r: ChRef, day?: number): StoryEvent {
-  const e: StoryEvent = { id: uid("e"), day: day ?? guessDay(vols, r), ch: r.ch.id, t: r.ch.title || `第${r.no}章`, who: "", ty: "main", process: r.ch.ol || "", from: "大纲（整章）" };
+  const e: StoryEvent = { id: uid("e"), day: day ?? guessDay(vols, r), ch: r.ch.id, t: r.ch.title || `第${r.no}章`, who: "", ty: "main", process: olText(r.ch), from: "大纲（整章）" };
   events.push(e);
   return e;
 }
@@ -249,7 +250,7 @@ export function buildSync(d: SyncData): { items: SyncItem[]; notes: SyncNote[] }
     }
   // 还没有场景、但写了章名或本章大纲的章，整章记一条事件
   for (const r of all) {
-    if (r.ch.scenes.length || !(r.ch.title.trim() || r.ch.ol?.trim())) continue;
+    if (r.ch.scenes.length || !(r.ch.title.trim() || olText(r.ch))) continue;
     if (d.events.some((e) => e.ch === r.ch.id)) continue;
     const cid = r.ch.id;
     const g = dayGuess(d.vols, r);
@@ -366,7 +367,7 @@ export function applyVolumeSplit(vols: Volume[], events: StoryEvent[], v: number
     if (ch) {
       let touched = false;
       if (!ch.title.trim() && x.t) (ch.title = x.t), (touched = true);
-      if (!ch.ol?.trim() && x.ol) (ch.ol = x.ol), (touched = true);
+      if (!olText(ch) && x.ol) (ch.ol = x.ol), (touched = true);
       if (!ch.hook?.trim() && x.hook) (ch.hook = x.hook), (touched = true);
       if (ch.scenes.length) {
         if (touched) filled++;
