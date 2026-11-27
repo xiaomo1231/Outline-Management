@@ -25,7 +25,7 @@ import { EDITOR_DEFAULT, useSetting, type EditorPrefs } from "../lib/hooks";
 import { importFont, loadSavedFonts, SYSTEM_FONTS } from "../lib/fonts";
 import { ruleCheck } from "../lib/chars";
 import { Issue, AsyncButton, Empty, Seg } from "../components/ui";
-import { countIn, findInDoc, replaceInHtml, snippets, type Hit } from "../lib/findReplace";
+import { aiCharsInHtml, countIn, findInDoc, replaceInHtml, snippets, type Hit } from "../lib/findReplace";
 import { isTauri } from "../lib/db";
 import { ExportPanel } from "./DataPanels";
 import * as T from "../lib/ai/tasks";
@@ -255,6 +255,8 @@ export default function Write() {
     if (loadedFor.current === id) return;
     const prev = loadedFor.current;
     if (prev) {
+      // 上一章还在生成的 AI（扩写、按大纲生成草稿等）停掉：结果不会再用，不要接着花钱
+      abort.current?.abort();
       const snap = snapOf(editor);
       const p = flushNow();
       p.then(() => snapshot(work.id, prev, snap, "离开本章"))
@@ -1682,7 +1684,7 @@ function FindPanel({ editor, workId, curId, chs, replace: startReplace, open, cl
       if (!out.n) continue;
       await snapshot(workId, r.id, { html: t.html, plain: t.plain, words: t.words, ai: t.ai_chars }, "全书替换前");
       const plain = htmlToText(out.html);
-      delta += await repo.saveText(workId, r.id, out.html, plain, countWords(plain), t.ai_chars);
+      delta += await repo.saveText(workId, r.id, out.html, plain, countWords(plain), aiCharsInHtml(out.html));
       arc.noteEdit(r.id);
       n += out.n;
     }

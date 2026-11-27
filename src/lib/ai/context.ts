@@ -11,6 +11,7 @@ import { PATTERNS } from "../aiscan";
 import { limitsBlock, limitsTail, type LimitAt, type LimitTask } from "../limits";
 import { mentioned } from "../mention";
 import { archiveMap, ensureFresh } from "./archive";
+import { AiError } from "./client";
 import { clip } from "../util";
 import { residentLimitOf, type MemPrefs } from "../hooks";
 import { olText } from "../chapterOutline";
@@ -76,11 +77,13 @@ export async function recall(c: Ctx, keys: string[], limit = 12): Promise<MemIte
 }
 
 /** 写某一章需要的全部材料：按大纲提前召回 */
-export async function chapterContext(c: Ctx, r: ChRef, opts: { full?: boolean; onStep?: (s: string) => void } = {}): Promise<{ text: string; refs: string[] }> {
+export async function chapterContext(c: Ctx, r: ChRef, opts: { full?: boolean; onStep?: (s: string) => void; signal?: AbortSignal; text?: string } = {}): Promise<{ text: string; refs: string[] }> {
   const refs: string[] = [];
   const parts: string[] = [];
   const names = new Set<string>();
   r.ch.scenes.forEach((s) => s.who.forEach((w) => names.add(w)));
+  // 没拆场景的章只有本章大纲：大纲（和已写正文）里提到的人物（含别名）也算本章出场
+  mentioned(c.chars, [r.ch.ol ?? "", opts.text ?? ""].join("\n")).forEach((n) => names.add(n));
   if (r.ch.scenes.some((s) => s.pov)) r.ch.scenes.forEach((s) => s.pov && names.add(s.pov));
   const people = c.chars.filter((x) => x.name && names.has(x.name));
   if (people.length) {
@@ -95,7 +98,7 @@ export async function chapterContext(c: Ctx, r: ChRef, opts: { full?: boolean; o
   }
   const keys = [...names, ...r.ch.scenes.flatMap((s) => [s.plant, s.pay, s.place || ""]), ...r.ch.scenes.flatMap((s) => words(s.t))];
   // 整章生成、续写：先补齐前几章归档，上一章给多一些原文；Ctrl+Enter 这类快操作不等
-  const prior = await priorStory(c, r.no, { n: 5, tail: opts.full ? 6000 : 1500, names: keys, ensure: opts.full, onStep: opts.onStep });
+  const prior = await priorStory(c, r.no, { n: 5, tail: opts.full ? 6000 : 1500, names: [...keys, ...words(r.ch.ol ?? "")], ensure: opts.full, onStep: opts.onStep, signal: opts.signal });
   if (prior.text) {
     parts.push(prior.text);
     refs.push(...prior.refs);
@@ -135,10 +138,11 @@ export const CONTINUE_RULE = `接上前文的硬性要求：
  * 写在某一章之前的“前文”：给大纲和正文任务用。
  * 读章节归档（摘要、章末状态），没归档的章退回用大纲和正文结尾；再加上最近一章正文的原文结尾、相关记忆和设定集。
  */
-export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: number; bible?: boolean; names?: string[]; ensure?: boolean; onStep?: (s: string) => void } = {}): Promise<{ text: string; refs: string[]; names: string[] }> {
+export async function priorStory(c: Ctx, no: number, opts: { n?: number; tail?: number; bible?: boolean; names?: string[]; ensure?: boolean; onStep?: (s: string) => void; signal?: AbortSignal } = {}): Promise<{ text: string; refs: string[]; names: string[] }> {
   const n = opts.n ?? 10;
   const tail = opts.tail ?? 1500;
-  if (opts.ensure) await ensureFresh(c.work.id, no, 3, opts.onStep).catch(() => 0);
+  if (opts.ensure) await ensureFresh(c.work.id, no, 3, opts.onStep, opts.signal).catch(() => 0);
+  if (opts.signal?.aborted) throw new AiError("已停止", "abort");
   const refs: string[] = [];
   const parts: string[] = [];
   const all = allChapters(c.vols);
