@@ -1,3 +1,4 @@
+import { names as nameList } from "../../lib/ai/norm";
 import { useMemo, useState } from "react";
 import { useStore, toast } from "../../lib/store";
 import { allChapters, chapterLabel, dayLabel, eventToOutline, findChapter, findScene, SHARE, sortEvents } from "../../lib/outline";
@@ -15,7 +16,8 @@ export const TYN: Record<EventType, string> = { main: "主线", side: "支线", 
 const TYC: Record<EventType, string> = { main: "var(--accent)", side: "var(--muted)", plant: "var(--ai-line)", pay: "var(--seal)", hidden: "#8B7BB8" };
 
 /** 事件里的人物：「、」「，」或空格隔开 */
-export const whoList = (w: string) => (w || "").split(/[、,，\s]+/).filter(Boolean);
+/** 事件的人物（「、」分隔）。老数据里可能是数组，也照样认 */
+export const whoList = (w: unknown) => nameList(w);
 
 export function EventActions({ mode, setMode, say, onSync }: { mode: "simple" | "detail"; setMode: (m: "simple" | "detail") => void; say: Say; onSync: () => void }) {
   const [chId, setChId] = useState("");

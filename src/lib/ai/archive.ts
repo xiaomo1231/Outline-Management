@@ -4,6 +4,8 @@
 // 每次先和上次归档时的正文比对，只改了几个字就不重新归档，省钱。
 import DiffMatchPatch from "diff-match-patch";
 import { chatJson } from "./client";
+import { str } from "./norm";
+export { str };
 import type { Ctx } from "./context";
 import { toast, useStore } from "../store";
 import * as repo from "../repo";
@@ -107,15 +109,6 @@ interface Digest {
   changes: { name: string; field: string; to: string; cause: string; quote: string }[];
   /** 重新归档时：这次修改有没有改掉会影响后文的东西 */
   ripple?: string;
-}
-
-/** AI 返回的字段规整成字符串：数字照写，数组、对象取里面的字，其他当成没有 */
-export function str(v: unknown): string {
-  if (typeof v === "string") return v.trim();
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (Array.isArray(v)) return v.map(str).filter(Boolean).join("、");
-  if (v && typeof v === "object") return Object.values(v).map(str).filter(Boolean).join("，");
-  return "";
 }
 
 /** 检查 AI 返回的归档：结构不对就报错，旧归档原样保留，下次再补 */
@@ -398,13 +391,15 @@ export async function catchUpRecent(work: Id, n = 5): Promise<void> {
  * 生成前确保前几章的归档是新的：没归档、归档后改过、旧格式的，当场归档（后台正在归档的就等它）。
  * 出错不挡生成，前文退回用原文。返回补了几章。
  */
-export async function ensureFresh(work: Id, no: number, n = 3, onStep?: (s: string) => void): Promise<number> {
+export async function ensureFresh(work: Id, no: number, n = 3, onStep?: (s: string) => void, signal?: AbortSignal): Promise<number> {
   if (!(await hasKey())) return 0;
   const say = onStep ?? ((s: string) => toast(s + "，整理完再生成……"));
   const texts = new Map((await repo.allTexts(work)).map((t) => [t.id, t]));
   const before = allChapters(useStore.getState().vols).filter((x) => x.no < no && texts.get(x.ch.id)?.plain?.trim()).slice(-n);
   let done = 0;
   for (const r of before) {
+    // 作者点了「停止」：不再补后面的章（正在跑的那一章归档照常存好）
+    if (signal?.aborted) break;
     const nd = await need(r.ch.id);
     if (nd.need === "none" || nd.need === "same") {
       // 后台正在归档这一章：等它跑完

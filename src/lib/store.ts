@@ -5,6 +5,7 @@ import type { Arc, CallEntry, ChangeSet, Character, DocKind, StoryEvent, StyleSe
 import { emptySetup } from "./style";
 import { ensureLimits } from "./limits";
 import { uid } from "./util";
+import { tidyEvents, tidyVols } from "./ai/norm";
 
 export type Page = "library" | "new" | "write" | "outline" | "style" | "memory" | "settings";
 
@@ -136,6 +137,9 @@ export const useStore = create<State>((set, get) => ({
     // 旧的禁用清单第一次打开时转成写作限制
     data.style = { ...emptySetup(), ...data.style, limits: ensureLimits(data.style?.limits, data.style?.bans) };
     data.chars = tidyChars(data.chars);
+    // 修复前 AI 可能把对象、数组写进了场景和事件：载入时规整，免得打开就白屏
+    data.vols = tidyVols(data.vols);
+    data.events = tidyEvents(data.events);
     const first = data.vols[0]?.chapters[0]?.id ?? null;
     const last = await repo.getSetting<string | null>("lastChapter:" + id, null);
     set({ ...data, work: w, page, chapterId: last ?? first });
@@ -226,6 +230,8 @@ export const useStore = create<State>((set, get) => ({
       if (key) (patch as any)[key] = all[i].before[kind as keyof ChangeSet["before"]];
     }
     if (patch.chars) patch.chars = tidyChars(patch.chars);
+    if (patch.vols) patch.vols = tidyVols(patch.vols);
+    if (patch.events) patch.events = tidyEvents(patch.events);
     set({ ...patch, changesets: all.map((x) => (group.has(x.id) ? { ...x, undone: true } : x)) });
     [...(Object.keys(patch) as DataKey[]), "changesets" as DataKey].forEach(scheduleSave);
     get().flash(`已撤销：${cs.label}`);

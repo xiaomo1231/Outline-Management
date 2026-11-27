@@ -55,6 +55,26 @@ export async function trashChapter(work: Id, v: number, c: number, no: number) {
   await saveTrash(work, [item, ...(await listTrash(work))]);
 }
 
+/** 批量删章：从后往前删，前面的章号不会因为删了后面的而变，回收站里的标签和删之前看到的一致 */
+export async function trashChapters(work: Id, ids: Id[]): Promise<number> {
+  const want = new Set(ids);
+  const list: { id: Id; no: number }[] = [];
+  let no = 0;
+  for (const v of useStore.getState().vols) for (const c of v.chapters) {
+    no++;
+    if (want.has(c.id)) list.push({ id: c.id, no });
+  }
+  let n = 0;
+  for (const x of list.reverse()) {
+    const vols = useStore.getState().vols;
+    const v = vols.findIndex((y) => y.chapters.some((c) => c.id === x.id));
+    if (v < 0) continue;
+    await trashChapter(work, v, vols[v].chapters.findIndex((c) => c.id === x.id), x.no);
+    n++;
+  }
+  return n;
+}
+
 /** 删场景 */
 export async function trashScene(work: Id, v: number, c: number, si: number, dropEvent = false) {
   const s = useStore.getState();
